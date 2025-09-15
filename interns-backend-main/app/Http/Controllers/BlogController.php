@@ -11,7 +11,30 @@ class BlogController extends Controller
     public function index()
     {
         $posts = Blog::orderBy('created_at', 'desc')->get();
-        return response()->json($posts);
+        
+        // Transform the data to include excerpt and other frontend-expected fields
+        $transformedPosts = $posts->map(function($post) {
+            return [
+                'id' => $post->id,
+                'title' => $post->title,
+                'author' => $post->author,
+                'category' => $post->category,
+                'status' => $post->status,
+                'image_url' => $post->image_url,
+                'content' => $post->content,
+                'excerpt' => $this->generateExcerpt($post->content),
+                'views' => $post->views,
+                'likes' => $post->likes,
+                'publish_date' => $post->publish_date,
+                'created_at' => $post->created_at,
+                'updated_at' => $post->updated_at,
+                // Additional fields for frontend compatibility
+                'featured' => false, // You can add this field to the database if needed
+                'tags' => [], // You can add this field to the database if needed
+            ];
+        });
+        
+        return response()->json($transformedPosts);
     }
 
     // Store new blog post
@@ -97,5 +120,19 @@ class BlogController extends Controller
         $post->increment('likes');
 
         return response()->json(['message' => 'Like added']);
+    }
+
+    private function generateExcerpt($content, $length = 150)
+    {
+        // Remove HTML tags and get plain text
+        $text = strip_tags($content);
+        
+        // If text is shorter than desired length, return as is
+        if (strlen($text) <= $length) {
+            return $text;
+        }
+        
+        // Truncate and add ellipsis
+        return substr($text, 0, $length) . '...';
     }
 }

@@ -56,6 +56,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -72,9 +73,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { useContext, useEffect } from "react";
+import { useContext, useEffect, useRef } from "react";
 import { UserContext } from "@/App";
-import { projectService, serviceRequestService, messageService } from "@/lib/services";
+import { projectService, serviceRequestService, messageService, notificationService } from "@/lib/services";
 import { useSharedDataStore, dashboardCommunication } from "@/lib/sharedDataService";
 
 const UserDashboard = () => {
@@ -96,6 +97,8 @@ const UserDashboard = () => {
   const [messageAction, setMessageAction] = useState({ open: false, type: '', message: null });
   const [newProjectAction, setNewProjectAction] = useState({ open: false, type: '', project: null });
   const [notificationOpen, setNotificationOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notificationsList, setNotificationsList] = useState<any[]>([]);
 
   // Shared data store for communication with AdminDashboard
   const { 
@@ -139,41 +142,64 @@ const UserDashboard = () => {
     };
   }, [typedUser?.id]);
 
-  // Sample notifications data
-  const notifications = [
-    {
-      id: 1,
-      type: "info",
-      message: "Your project 'E-commerce Website' has been updated to 75% completion",
-      time: "2 hours ago"
-    },
-    {
-      id: 2,
-      type: "success",
-      message: "Service request 'Bug Fix Request' has been resolved",
-      time: "1 day ago"
-    },
-    {
-      id: 3,
-      type: "warning",
-      message: "Project 'Mobile App Development' deadline is approaching",
-      time: "2 days ago"
-    },
-    {
-      id: 4,
-      type: "info",
-      message: "New message received from development team",
-      time: "3 days ago"
-    }
-  ];
+  // Notifications helpers
+  const loadNotifications = () => {
+    notificationService.getNotifications().then(res => {
+      console.log('Notifications response:', res);
+      if (res.success) {
+        setNotificationsList(res.data || []);
+        console.log('Notifications loaded:', res.data);
+      } else {
+        console.error('Failed to load notifications:', res.error);
+      }
+    }).catch((error) => {
+      console.error('Error loading notifications:', error);
+    });
+    notificationService.getUnreadCount().then(res => {
+      console.log('Unread count response:', res);
+      if (res.success && res.data) setUnreadCount(res.data.count);
+    }).catch((error) => {
+      console.error('Error loading unread count:', error);
+    });
+  };
+  const markNotificationAsRead = (id: string) => {
+    notificationService.markAsRead(id).then(() => loadNotifications());
+  };
+  const markAllNotificationsAsRead = () => {
+    notificationService.markAllAsRead().then(() => loadNotifications());
+  };
 
   // User profile state
   const [userData, setUserData] = useState<any>(null);
   const [profileImageUrl, setProfileImageUrl] = useState("");
+  
+  // Initialize profile image URL from user context if available
+  useEffect(() => {
+    console.log('Profile picture useEffect - user:', user);
+    const userWithProfile = user as any;
+    if (user?.profilePic || userWithProfile?.profile_picture) {
+      const picUrl = user.profilePic || userWithProfile.profile_picture;
+      const fullUrl = picUrl ? (picUrl.startsWith('http') ? picUrl : `http://localhost:8000/${picUrl.replace(/^\//, '')}`) : "";
+      console.log('Setting profile image from user context:', fullUrl);
+      setProfileImageUrl(fullUrl);
+    }
+  }, [user]);
+
+  // Also update profile image when userData changes
+  useEffect(() => {
+    console.log('Profile picture useEffect - userData:', userData);
+    if (userData && userData.profile_picture) {
+      const picUrl = userData.profile_picture;
+      const fullUrl = picUrl ? (picUrl.startsWith('http') ? picUrl : `http://localhost:8000/${picUrl.replace(/^\//, '')}`) : "";
+      console.log('Setting profile image from userData:', fullUrl);
+      setProfileImageUrl(fullUrl);
+    }
+  }, [userData]);
   const [userLoading, setUserLoading] = useState(true);
 
   // Projects state
   const [projects, setProjects] = useState([]);
+  const [userProjectRequests, setUserProjectRequests] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
 
   // Service requests state
@@ -183,17 +209,95 @@ const UserDashboard = () => {
   // Messages state
   const [messages, setMessages] = useState([]);
   const [messagesLoading, setMessagesLoading] = useState(true);
-  // Fetch data from backend on mount
+  
+  // Progress updates state
+  const [progressUpdates, setProgressUpdates] = useState([]);
+  const [progressUpdatesLoading, setProgressUpdatesLoading] = useState(true);
+  
+  // Ref to track if data has been loaded to prevent multiple calls
+  const dataLoadedRef = useRef(false);
+
+  // Users state for helper functions
+  const [users, setUsers] = useState<any[]>([]);
+
+  // Helper function to get user name by ID or email
+  const getUserName = (userId: any, userEmail: any, fallbackName: any) => {
+    if (fallbackName && fallbackName !== 'Unknown' && fallbackName !== 'Unknown Client' && fallbackName !== 'Unknown User') {
+      return fallbackName;
+    }
+    
+    if (userId !== undefined && userId !== null) {
+      const foundUser = users.find(u => String(u.id) === String(userId));
+      if (foundUser) return foundUser.name;
+    }
+    
+    if (userEmail && userEmail !== 'No email') {
+      const foundUser = users.find(u => u.email === userEmail);
+      if (foundUser) return foundUser.name;
+    }
+    
+    if (userId !== undefined && userId !== null) return String(userId);
+    return 'Unknown User';
+  };
+
+  // Helper function to get user email by ID or name
+  const getUserEmail = (userId: any, userName: any, fallbackEmail: any) => {
+    if (fallbackEmail && fallbackEmail !== 'No email') {
+      return fallbackEmail;
+    }
+    
+    if (userId !== undefined && userId !== null) {
+      const foundUser = users.find(u => String(u.id) === String(userId));
+      if (foundUser) return foundUser.email;
+    }
+    
+    if (userName && userName !== 'Unknown User') {
+      const foundUser = users.find(u => u.name === userName);
+      if (foundUser) return foundUser.email;
+    }
+    
+    return 'No email';
+  };
+  // Fetch data from backend
   useEffect(() => {
+    // Only run if we have user identity and haven't loaded data yet
+    const currentUserId = (userData?.id ?? typedUser?.id) ? String(userData?.id ?? typedUser?.id) : undefined;
+    const currentEmail = userData?.email ?? user?.email;
+    const hasIdentity = Boolean(currentUserId || currentEmail);
+    
+    if (!hasIdentity) {
+      // Wait until we know who the user is
+      setProjectsLoading(false);
+      setServiceRequestsLoading(false);
+      setMessagesLoading(false);
+      setProgressUpdatesLoading(false);
+      setUserLoading(false);
+      return;
+    }
+
+    // Prevent multiple calls by checking if data has already been loaded
+    if (dataLoadedRef.current) {
+      return;
+    }
+
     setProjectsLoading(true);
     setServiceRequestsLoading(true);
     setMessagesLoading(true);
+    setProgressUpdatesLoading(true);
     setUserLoading(true);
     setError(null);
 
+    // Fetch user's own projects only
     projectService.getProjects().then(res => {
       if (res.success) {
-        setProjects(res.data);
+        // Filter projects to only show current user's projects
+        const userProjects = (res.data || []).filter((project: any) => {
+          const pid = project.clientId ?? project.client_id;
+          const pEmail = project.clientEmail ?? project.client_email;
+          return (currentUserId && String(pid) === currentUserId) || (currentEmail && pEmail === currentEmail);
+        });
+        setProjects(userProjects);
+        console.log('User projects loaded:', userProjects);
       } else {
         setError(res.error || 'Failed to load projects');
       }
@@ -203,9 +307,49 @@ const UserDashboard = () => {
       setProjectsLoading(false);
     });
 
+    // Notifications (requires auth)
+    loadNotifications();
+
+    // Load users for helper functions
+    import("@/lib/api").then(({ apiClient }) => {
+      apiClient.get('/users').then(res => {
+        if (Array.isArray(res)) {
+          setUsers(res || []);
+        }
+      }).catch(() => {
+        // Ignore errors for users loading
+      });
+    });
+
+    // Fetch user's project requests (submitted by user)
+    import("@/lib/api").then(({ apiClient }) => {
+      apiClient.get('/userprojects').then(res => {
+        const raw: any = res as any;
+        const arr = Array.isArray(raw) ? raw : (raw?.data || []);
+        const onlyMine = arr.filter((p: any) => {
+          const pid = p.clientId ?? p.client_id;
+          const pEmail = p.clientEmail ?? p.client_email;
+          return (currentUserId && String(pid) === currentUserId) || (currentEmail && pEmail === currentEmail);
+        });
+        setUserProjectRequests(onlyMine);
+        console.log('User project requests loaded:', onlyMine);
+      }).catch(() => {
+        console.error('Failed to load user project requests');
+        setUserProjectRequests([]);
+      });
+    });
+
+    // Fetch user's own service requests only
     serviceRequestService.getServiceRequests().then(res => {
       if (res.success) {
-        setServiceRequests(res.data);
+        // Filter service requests to only show current user's requests
+        const userServiceRequests = (res.data || []).filter((request: any) => {
+          const rid = request.clientId ?? request.user_id;
+          const rEmail = request.clientEmail ?? request.client_email;
+          return (currentUserId && String(rid) === currentUserId) || (currentEmail && rEmail === currentEmail);
+        });
+        setServiceRequests(userServiceRequests);
+        console.log('User service requests loaded:', userServiceRequests);
       } else {
         setError(res.error || 'Failed to load service requests');
       }
@@ -215,9 +359,22 @@ const UserDashboard = () => {
       setServiceRequestsLoading(false);
     });
 
+    // Fetch user's own messages only
     messageService.getMessages && messageService.getMessages().then(res => {
       if (res.success) {
-        setMessages(res.data);
+        // Filter messages to only show current user's messages (sent or received)
+        const userMessages = (res.data || []).filter((message: any) => {
+          const fromId = message.fromId ?? message.sender_id;
+          const toId = message.toId ?? message.receiver_id;
+          const fromEmail = message.fromEmail ?? message.from;
+          const toEmail = message.toEmail ?? message.to;
+          return (
+            (currentUserId && (String(fromId) === currentUserId || String(toId) === currentUserId)) ||
+            (currentEmail && (fromEmail === currentEmail || toEmail === currentEmail))
+          );
+        });
+        setMessages(userMessages);
+        console.log('User messages loaded:', userMessages);
       } else {
         setError(res.error || 'Failed to load messages');
       }
@@ -227,26 +384,100 @@ const UserDashboard = () => {
       setMessagesLoading(false);
     });
 
-    // Fetch user profile
-    if (user) {
+    // Fetch progress updates for current user only
+    const fetchProgressUpdates = async () => {
+      try {
+        console.log('Starting to fetch progress updates...');
+        
+        const { apiClient } = await import("@/lib/api");
+        const res = await apiClient.get('/progress-updates');
+        console.log('Progress updates raw response:', res);
+        const arr = Array.isArray(res) ? res : [];
+        console.log('Progress updates array:', arr);
+        
+        // Filter progress updates for current user only
+        const currentUserId = (userData?.id ?? typedUser?.id) ? String(userData?.id ?? typedUser?.id) : undefined;
+        const currentEmail = userData?.email ?? user?.email;
+        
+        const userProgressUpdates = arr.filter((update: any) => {
+          const updateClientId = update.client_id || update.clientId;
+          const updateClientEmail = update.client_email || update.clientEmail;
+          const updateClientName = update.client_name || update.clientName;
+          
+          // Match by user ID, email, or name
+          return (currentUserId && String(updateClientId) === currentUserId) ||
+                 (currentEmail && updateClientEmail === currentEmail) ||
+                 (currentEmail && updateClientName === currentEmail);
+        });
+        
+        setProgressUpdates(userProgressUpdates);
+        console.log('Progress updates loaded (filtered for user):', userProgressUpdates);
+        console.log('Setting loading to false, progressUpdates length:', userProgressUpdates.length);
+        
+        // Set loading state to false
+        setProgressUpdatesLoading(false);
+        console.log('Loading state set to false');
+        
+      } catch (error) {
+        console.error('Failed to load progress updates:', error);
+        setProgressUpdatesLoading(false);
+        setError('Failed to load progress updates');
+      }
+    };
+    
+    fetchProgressUpdates();
+
+    // Fetch user profile even if context is empty but token exists
+    const hasToken = (() => { try { return !!localStorage.getItem('authToken'); } catch { return false; } })();
+    if (user || hasToken) {
       import("@/lib/services").then(({ userService }) => {
         userService.getProfile().then(res => {
           if (res.success) {
-            setUserData(res.data);
-            setProfileImageUrl(res.data.profilePic || "");
+            // Handle case where res.data might be an array
+            const profileData = Array.isArray(res.data) ? res.data[0] : res.data;
+            setUserData(profileData);
+            const profilePicUrl = profileData.profilePic || profileData.profile_picture || "";
+            // Ensure the URL is properly formatted
+            const fullUrl = profilePicUrl ? (profilePicUrl.startsWith('http') ? profilePicUrl : `http://localhost:8000/${profilePicUrl.replace(/^\//, '')}`) : "";
+            setProfileImageUrl(fullUrl);
+            console.log('User profile loaded:', profileData);
+            // Sync to context/localStorage for global use
+            try {
+              const merged = { ...(user || {}), ...profileData } as any;
+              localStorage.setItem('authUser', JSON.stringify(merged));
+            } catch {}
           } else {
-            setError(res.error || 'Failed to load user profile');
+            console.error('Failed to load user profile:', res.error);
+            // Fallback to user context data
+            setUserData({
+              name: user.name || user.email || 'User',
+              email: user.email || '',
+              phone: user.phone || '',
+              company: user.company || '',
+              profilePic: user.profilePic || ''
+            });
           }
           setUserLoading(false);
-        }).catch(() => {
-          setError('Failed to load user profile');
+        }).catch((error) => {
+          console.error('Error loading user profile:', error);
+          // Fallback to user context data
+          setUserData({
+            name: user.name || user.email || 'User',
+            email: user.email || '',
+            phone: user.phone || '',
+            company: user.company || '',
+            profilePic: user.profilePic || ''
+          });
           setUserLoading(false);
         });
       });
     } else {
       setUserLoading(false);
     }
-  }, [user]);
+    
+    // Mark data as loaded to prevent multiple calls
+    dataLoadedRef.current = true;
+  }, [user, userData]);
 
   // Sample feedback data
   const feedback = [
@@ -260,26 +491,27 @@ const UserDashboard = () => {
   ];
 
   // Sample recent activities
+  // Generate recent activities from real data
   const recentActivities = [
-    {
-      id: 1,
+    ...projects.slice(0, 2).map((project, index) => ({
+      id: `project-${project.id}`,
       type: "project",
-      message: "Project 'E-commerce Website' is 75% complete",
-      timestamp: "2 hours ago"
-    },
-    {
-      id: 2,
-      type: "request",
-      message: "New service request submitted",
-      timestamp: "1 day ago"
-    },
-    {
-      id: 3,
+      message: `Project '${project.title}' status: ${project.status}`,
+      timestamp: project.updatedAt || project.createdAt || "Recently"
+    })),
+    ...serviceRequests.slice(0, 2).map((request, index) => ({
+      id: `request-${request.id}`,
+      type: "request", 
+      message: `Service request: ${request.title} (${request.status})`,
+      timestamp: request.createdAt || "Recently"
+    })),
+    ...messages.slice(0, 2).map((message, index) => ({
+      id: `message-${message.id}`,
       type: "message",
-      message: "New message from development team",
-      timestamp: "2 days ago"
-    }
-  ];
+      message: `Message: ${message.subject}`,
+      timestamp: message.timestamp || message.createdAt || "Recently"
+    }))
+  ].slice(0, 4); // Limit to 4 most recent activities
 
   // State for profile edit
   const [editProfile, setEditProfile] = useState({
@@ -359,77 +591,231 @@ const UserDashboard = () => {
     navigate("/login");
   };
 
-  const handleUpdateProfile = (e: React.FormEvent) => {
+  const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Updated profile:', editProfile);
-    setEditProfileOpen(false);
-    alert("Profile updated successfully!");
+    try {
+      const formData = new FormData();
+      formData.append('name', editProfile.name);
+      formData.append('email', editProfile.email);
+      formData.append('phone', editProfile.phone);
+      formData.append('company', editProfile.company);
+      
+      // Add profile picture if changed
+      if (profileImageFile) {
+        formData.append('profile_picture', profileImageFile);
+      }
+      
+      const response = await fetch('http://localhost:8000/api/profile', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+        },
+        body: formData,
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Profile updated:', result);
+        setUserData(result.data);
+        const newUrl = result.data.profile_picture || result.data.profilePic || "";
+        // Ensure the URL is properly formatted
+        const fullUrl = newUrl ? (newUrl.startsWith('http') ? newUrl : `http://localhost:8000/${newUrl.replace(/^\//, '')}`) : "";
+        setProfileImageUrl(fullUrl);
+        // persist to context/localStorage
+        try {
+          const updated: any = { ...(user || {}), ...result.data };
+          localStorage.setItem('authUser', JSON.stringify(updated));
+          setUser(updated);
+        } catch {}
+        setEditProfileOpen(false);
+        alert("Profile updated successfully!");
+      } else {
+        console.error('Failed to update profile');
+        alert("Failed to update profile. Please try again.");
+      }
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      alert("Error updating profile. Please try again.");
+    }
   };
 
-  const handleChangePassword = (e: React.FormEvent) => {
+  const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (passwordChange.newPassword !== passwordChange.confirmPassword) {
       alert("New passwords don't match!");
       return;
     }
-    console.log('Password changed');
-    setPasswordChange({
-      currentPassword: "",
-      newPassword: "",
-      confirmPassword: ""
-    });
-    setChangePasswordOpen(false);
-    alert("Password changed successfully!");
+    
+    try {
+      const response = await fetch('http://localhost:8000/api/users/change-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+        },
+        body: JSON.stringify({
+          current_password: passwordChange.currentPassword,
+          new_password: passwordChange.newPassword,
+          new_password_confirmation: passwordChange.confirmPassword
+        })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Password changed:', result);
+        setPasswordChange({
+          currentPassword: "",
+          newPassword: "",
+          confirmPassword: ""
+        });
+        setChangePasswordOpen(false);
+        alert("Password changed successfully!");
+      } else {
+        const errorData = await response.json();
+        console.error('Failed to change password:', errorData);
+        alert(errorData.message || "Failed to change password. Please try again.");
+      }
+    } catch (error) {
+      console.error('Error changing password:', error);
+      alert("Error changing password. Please try again.");
+    }
   };
 
-  const handleSubmitServiceRequest = (e: React.FormEvent) => {
+  const handleSubmitServiceRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('New service request:', newServiceRequest);
-    
-    // Notify admin dashboard of new service request
-    dashboardCommunication.notifyAdminOfServiceRequestAction(
-      newServiceRequest.title || 'unknown', // requestId
-      'new-request',
-      {
+    try {
+      const serviceRequestData = {
         title: newServiceRequest.title,
+        description: newServiceRequest.description,
         priority: newServiceRequest.priority,
         category: newServiceRequest.category,
+        projectRelated: newServiceRequest.projectRelated,
         urgency: newServiceRequest.urgency,
-        submittedDate: new Date().toISOString().split('T')[0]
+        expectedResolution: newServiceRequest.expectedResolution,
+        additionalNotes: newServiceRequest.additionalNotes,
+        feedback: newServiceRequest.feedback
+      };
+
+      console.log('Sending service request:', serviceRequestData);
+      console.log('Auth token:', localStorage.getItem('authToken'));
+
+      const response = await fetch('http://localhost:8000/api/user_service-requests', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+        },
+        body: JSON.stringify(serviceRequestData),
+      });
+
+      console.log('Service request response status:', response.status);
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Service request submitted successfully:', result);
+
+        // Optimistically add to Service Requests and refresh overview
+        const created = result.data || result;
+        const normalized = {
+          id: String(created.id ?? Date.now()),
+          title: created.title ?? newServiceRequest.title,
+          description: created.description ?? newServiceRequest.description,
+          type: created.type ?? created.category ?? newServiceRequest.category ?? 'support',
+          priority: created.priority ?? newServiceRequest.priority,
+          status: created.status ?? 'Pending',
+          clientId: String(created.user_id ?? (user as any)?.id ?? ''),
+          clientName: created.user_name ?? userData?.name ?? '',
+          createdAt: created.created_at ?? new Date().toISOString(),
+          updatedAt: created.updated_at ?? new Date().toISOString(),
+        } as any;
+        setServiceRequests(prev => [normalized, ...prev]);
+
+        // Notify admin dashboard
+        dashboardCommunication.notifyAdminOfServiceRequestAction(
+          normalized.id,
+          'new-service-request',
+          {
+            title: normalized.title,
+            priority: normalized.priority,
+            category: normalized.type,
+            urgency: newServiceRequest.urgency,
+            submittedDate: new Date().toISOString().split('T')[0]
+          }
+        );
+
+        setNewServiceRequest({
+          title: "",
+          description: "",
+          priority: "",
+          category: "",
+          projectRelated: "",
+          urgency: "",
+          expectedResolution: "",
+          additionalNotes: "",
+          feedback: {
+            rating: 5,
+            comment: "",
+            satisfaction: "",
+            improvement: ""
+          }
+        });
+        setNewServiceRequestOpen(false);
+        alert("Service request and feedback submitted successfully! Our team will review your request and get back to you within 24-48 hours.");
+      } else {
+        console.error('Failed to submit service request');
+        alert("Failed to submit service request. Please try again.");
       }
-    );
-    
-    setNewServiceRequest({
-      title: "",
-      description: "",
-      priority: "",
-      category: "",
-      projectRelated: "",
-      urgency: "",
-      expectedResolution: "",
-      additionalNotes: "",
-      feedback: {
-        rating: 5,
-        comment: "",
-        satisfaction: "",
-        improvement: ""
-      }
-    });
-    setNewServiceRequestOpen(false);
-    alert("Service request and feedback submitted successfully! Our team will review your request and get back to you within 24-48 hours.");
+    } catch (error) {
+      console.error('Error submitting service request:', error);
+      alert("Error submitting service request. Please try again.");
+    }
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('New message:', newMessage);
-    setNewMessage({
-      subject: "",
-      message: "",
-      recipient: "",
-      priority: "Normal"
-    });
-    setNewMessageOpen(false);
-    alert("Message sent successfully! Our team will respond within 24 hours.");
+
+
+    try {
+
+      const messageData = {
+        recipient_name: 'Admin', // Must match backend validation
+        subject: newMessage.subject,
+        content: newMessage.message,
+      };
+
+      console.log('Sending message:', messageData);
+      const result = await messageService.createMessage(messageData);
+      if (result.success && result.data) {
+        const created = result.data;
+        setMessages(prev => [created, ...prev]);
+
+        // Notify admin dashboard of new message
+        dashboardCommunication.notifyAdminOfUserAction(
+          typedUser?.id || 'unknown',
+          'new-message',
+          {
+            to: created.toName ?? 'Admin',
+            subject: created.subject,
+            content: created.content,
+          }
+        );
+
+        setNewMessage({
+          subject: "",
+          message: "",
+          recipient: "",
+          priority: "Normal"
+        });
+        setNewMessageOpen(false);
+        alert("Message sent successfully! Our team will respond within 24 hours.");
+      } else {
+        console.error('Failed to send message:', result.error);
+        alert(`Failed to send message: ${result.error || 'Please try again.'}`);
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      alert("Error sending message. Please check your connection and try again.");
+    }
   };
 
   const handleSubmitFeedback = (e: React.FormEvent) => {
@@ -444,36 +830,91 @@ const UserDashboard = () => {
     alert("Feedback submitted successfully!");
   };
 
-  const handleSubmitProject = (e: React.FormEvent) => {
+  const handleSubmitProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('New project submission:', newProject);
-    
-    // Notify admin dashboard of new project submission
-    dashboardCommunication.notifyAdminOfProjectAction(
-      newProject.title || 'unknown', // projectId
-      'new-project',
-      {
+    try {
+      const projectData = {
         title: newProject.title,
         projectType: newProject.projectType,
+        description: newProject.description,
+        budget: newProject.budget,
         timeline: newProject.timeline,
-        submittedDate: newProject.submittedDate
+        requirements: newProject.requirements,
+        features: newProject.features,
+        targetAudience: newProject.targetAudience,
+        additionalNotes: newProject.additionalNotes
+      };
+
+      const response = await fetch('http://localhost:8000/api/userprojects', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+        },
+        body: JSON.stringify(projectData),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Project submitted successfully:', result);
+        
+        // Optimistically add to New Project list and Overview counts
+        const created = result.data || result;
+        const normalized = {
+          id: String(created.id ?? Date.now()),
+          title: created.project_title ?? newProject.title,
+          description: created.description ?? newProject.description,
+          type: created.type ?? newProject.projectType,
+          status: created.status ?? 'Pending Review',
+          timeline: created.timeline ?? newProject.timeline,
+          submittedDate: created.date_received ?? new Date().toISOString().split('T')[0],
+          clientName: created.client_name ?? userData?.name ?? '',
+          clientEmail: created.client_email ?? userData?.email ?? '',
+          clientId: (user as any)?.id,
+          progress: 10,
+          priority: 'Medium',
+          budget: 0,
+          spent: 0,
+          startDate: created.date_received ?? new Date().toISOString(),
+          endDate: created.endDate ?? new Date().toISOString(),
+        } as any;
+        setUserProjectRequests(prev => [normalized, ...prev]);
+        setProjects(prev => [normalized, ...prev]);
+
+        // Notify admin dashboard of new project submission
+        dashboardCommunication.notifyAdminOfProjectAction(
+          normalized.id,
+          'new-project',
+          {
+            title: normalized.title,
+            projectType: normalized.type,
+            timeline: normalized.timeline,
+            submittedDate: normalized.submittedDate
+          }
+        );
+        
+        setNewProject({
+          title: "",
+          description: "",
+          projectType: "",
+          budget: "",
+          timeline: "",
+          requirements: "",
+          features: "",
+          targetAudience: "",
+          additionalNotes: "",
+          submittedDate: new Date().toISOString().split('T')[0]
+        });
+        setAddProjectOpen(false);
+        alert("Project submitted successfully! Our team will review your request and get back to you within 24-48 hours.");
+      } else {
+        console.error('Failed to submit project');
+        alert("Failed to submit project. Please try again.");
       }
-    );
-    
-    setNewProject({
-      title: "",
-      description: "",
-      projectType: "",
-      budget: "",
-      timeline: "",
-      requirements: "",
-      features: "",
-      targetAudience: "",
-      additionalNotes: "",
-      submittedDate: new Date().toISOString().split('T')[0]
-    });
-    setAddProjectOpen(false);
-    alert("Project submitted successfully! Our team will review your request and get back to you within 24-48 hours.");
+    } catch (error) {
+      console.error('Error submitting project:', error);
+      alert("Error submitting project. Please try again.");
+    }
   };
 
   const handleProfileImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -527,9 +968,7 @@ const UserDashboard = () => {
     ));
   };
 
-  if (projectsLoading || serviceRequestsLoading || messagesLoading || userLoading) {
-    return <div className="flex items-center justify-center min-h-screen">Loading dashboard...</div>;
-  }
+  // Always render shell immediately; show skeletons where needed instead of blocking whole page
   if (error) {
     return <div className="flex items-center justify-center min-h-screen text-red-600 font-bold">{error}</div>;
   }
@@ -551,7 +990,7 @@ const UserDashboard = () => {
               <Button variant="ghost" size="icon" className="relative" onClick={() => setNotificationOpen(true)}>
                 <Bell className="h-5 w-5" />
                 <Badge className="absolute -top-1 -right-1 w-4 h-4 rounded-full p-0 flex items-center justify-center text-xs">
-                  {notifications.length}
+                  {unreadCount}
                 </Badge>
               </Button>
               <Avatar onClick={() => setEditProfileOpen(true)} className="cursor-pointer hover:opacity-80 transition-opacity">
@@ -569,7 +1008,7 @@ const UserDashboard = () => {
 
       <div className="container mx-auto px-4 py-8">
         <div className="mb-8 animate-fade-in">
-          <h1 className="text-3xl font-bold mb-2">Welcome back, {userData ? userData.name : "User"}</h1>
+          <h1 className="text-3xl font-bold mb-2">Welcome back, {userData?.name || user?.name || user?.email || "User"}</h1>
           <p className="text-muted-foreground">Manage your projects and communicate with our team.</p>
         </div>
 
@@ -678,46 +1117,63 @@ const UserDashboard = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {projects.map((project) => (
-                      <TableRow key={project.id} className="hover:bg-muted/50 transition-colors">
-                        <TableCell>
-                          <div className="flex items-center space-x-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=32&h=32&fit=crop&crop=face" />
-                              <AvatarFallback>{userData && userData.name ? userData.name.split(' ').map(n => n[0]).join('') : "U"}</AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <div className="font-medium">{userData ? userData.name : "User"}</div>
-                              <div className="text-sm text-muted-foreground">Client</div>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div>
-                            <div className="font-medium">{project.title}</div>
-                            <div className="text-sm text-muted-foreground">Project</div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center space-x-2">
-                            <Progress value={project.progress} className="w-16" />
-                            <span className="text-sm">{project.progress}%</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={getStatusColor(project.status)}>{project.status}</Badge>
-                        </TableCell>
-                        <TableCell>{project.endDate}</TableCell>
-                        <TableCell>{project.endDate}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Button variant="ghost" size="icon" onClick={() => setProjectAction({ open: true, type: 'view', project })}>
-                              <Eye className="h-4 w-4" />
-                            </Button>
+                    {progressUpdatesLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8">
+                          <div className="flex items-center justify-center space-x-2">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                            <span>Loading progress updates...</span>
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : progressUpdates.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                          No progress updates available
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      progressUpdates.map((update) => (
+                        <TableRow key={update.id} className="hover:bg-muted/50 transition-colors">
+                          <TableCell>
+                            <div className="flex items-center space-x-3">
+                              <Avatar className="h-8 w-8">
+                                <AvatarImage src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=32&h=32&fit=crop&crop=face" />
+                                <AvatarFallback>{update.client?.name ? update.client.name.split(' ').map(n => n[0]).join('') : "C"}</AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <div className="font-medium">{update.client?.name || "Client"}</div>
+                                <div className="text-sm text-muted-foreground">Client</div>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div>
+                              <div className="font-medium">{update.project}</div>
+                              <div className="text-sm text-muted-foreground">Project</div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center space-x-2">
+                              <Progress value={update.progress} className="w-16" />
+                              <span className="text-sm">{update.progress}%</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={getStatusColor(update.current_status)}>{update.current_status}</Badge>
+                          </TableCell>
+                          <TableCell>{update.last_update || "N/A"}</TableCell>
+                          <TableCell>{update.next_deadline || "N/A"}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Button variant="ghost" size="icon" onClick={() => setProjectAction({ open: true, type: 'view', project: update })}>
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
                   </CardContent>
@@ -751,53 +1207,22 @@ const UserDashboard = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {[
-                      {
-                        id: 1,
-                        title: "E-commerce Website Development",
-                        description: "Online store with payment integration and inventory management",
-                        type: "Web Development",
-                        status: "Pending Review",
-                        timeline: "3 months",
-                        submittedDate: "2024-01-15"
-                      },
-                      {
-                        id: 2,
-                        title: "Mobile App for Restaurant",
-                        description: "Food ordering app with real-time tracking and payment",
-                        type: "Mobile Development",
-                        status: "Under Review",
-                        timeline: "4 months",
-                        submittedDate: "2024-01-14"
-                      },
-                      {
-                        id: 3,
-                        title: "Inventory Management System",
-                        description: "Custom software for warehouse and inventory tracking",
-                        type: "Custom Software",
-                        status: "Approved",
-                        timeline: "6 months",
-                        submittedDate: "2024-01-13"
-                      },
-                      {
-                        id: 4,
-                        title: "UI/UX Design for SaaS Platform",
-                        description: "Complete design system and user interface for B2B platform",
-                        type: "UI/UX Design",
-                        status: "In Progress",
-                        timeline: "2 months",
-                        submittedDate: "2024-01-12"
-                      }
-                    ].map((project) => (
+                    {userProjectRequests.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          No project requests submitted yet. Click "Submit New Project" to get started.
+                        </TableCell>
+                      </TableRow>
+                    ) : userProjectRequests.map((project) => (
                       <TableRow key={project.id} className="hover:bg-muted/50 transition-colors">
                         <TableCell>
                           <div>
-                            <div className="font-medium">{project.title}</div>
-                            <div className="text-sm text-muted-foreground">{project.description}</div>
+                            <div className="font-medium">{project.title || project.project_title}</div>
+                            <div className="text-sm text-muted-foreground">{project.description || 'Project description'}</div>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline">{project.type}</Badge>
+                          <Badge variant="outline">{project.type || project.projectType}</Badge>
                         </TableCell>
                         <TableCell>
                           <Badge variant={project.status === "Approved" ? "default" : project.status === "Under Review" ? "secondary" : project.status === "In Progress" ? "default" : "secondary"}>
@@ -805,7 +1230,7 @@ const UserDashboard = () => {
                           </Badge>
                         </TableCell>
                         <TableCell>{project.timeline}</TableCell>
-                        <TableCell>{project.submittedDate}</TableCell>
+                        <TableCell>{project.submittedDate || project.date_received || project.created_at || project.createdAt || 'Unknown date'}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <Button variant="ghost" size="icon" onClick={() => setNewProjectAction({ open: true, type: 'view', project })}>
@@ -868,22 +1293,22 @@ const UserDashboard = () => {
                         <TableCell>
                           <Badge variant={getStatusColor(request.status)}>{request.status}</Badge>
                         </TableCell>
-                        <TableCell>{request.submittedDate}</TableCell>
+                        <TableCell>{request.submittedDate || request.created_at || request.createdAt || request.date_received || 'Unknown date'}</TableCell>
                         <TableCell>
                           <div className="flex flex-col gap-1">
                             <div className="flex items-center gap-2">
                               <div className="flex items-center">
                                 {[1, 2, 3, 4, 5].map((star) => (
-                                  <Star key={star} className={`h-3 w-3 ${star <= request.feedback.rating ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
+                                  <Star key={star} className={`h-3 w-3 ${star <= (request.feedback?.rating ?? 0) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
                                 ))}
                               </div>
-                              <span className="text-xs text-muted-foreground">({request.feedback.rating}/5)</span>
+                              <span className="text-xs text-muted-foreground">({(request.feedback?.rating ?? 0)}/5)</span>
                             </div>
-                            <Badge variant={request.feedback.rating >= 4 ? "default" : request.feedback.rating >= 3 ? "secondary" : "destructive"} className="text-xs">
-                              {request.feedback.satisfaction}
+                            <Badge variant={(request.feedback?.rating ?? 0) >= 4 ? "default" : (request.feedback?.rating ?? 0) >= 3 ? "secondary" : "destructive"} className="text-xs">
+                              {request.feedback?.satisfaction ?? 'N/A'}
                             </Badge>
-                            <div className="text-xs text-muted-foreground max-w-[150px] truncate" title={request.feedback.comment}>
-                              "{request.feedback.comment}"
+                            <div className="text-xs text-muted-foreground max-w-[150px] truncate" title={request.feedback?.comment ?? ''}>
+                              "{request.feedback?.comment ?? ''}"
                             </div>
                           </div>
                         </TableCell>
@@ -928,7 +1353,7 @@ const UserDashboard = () => {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>From</TableHead>
+                      <TableHead>Recipient</TableHead>
                       <TableHead>Subject</TableHead>
                       <TableHead>Content</TableHead>
                       <TableHead>Time</TableHead>
@@ -937,24 +1362,33 @@ const UserDashboard = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {messages.map((msg) => (
+                    {messages.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          No messages yet. Click "Send New Message" to start a conversation.
+                        </TableCell>
+                      </TableRow>
+                    ) : messages.map((msg) => (
                       <TableRow key={msg.id} className="hover:bg-muted/50 transition-colors">
                         <TableCell>
                           <div className="flex items-center space-x-3">
                             <Avatar className="h-8 w-8">
-                              <AvatarFallback className="text-xs">{msg.from.split(' ').map(n => n[0]).join('')}</AvatarFallback>
+                              <AvatarFallback className="text-xs">{getUserName(msg.toId, msg.toEmail, msg.to || 'Admin').split(' ').map(n => n[0]).join('')}</AvatarFallback>
                             </Avatar>
-                            <span className="font-medium">{msg.from}</span>
+                            <div>
+                              <div className="font-medium">{getUserName(msg.toId, msg.toEmail, msg.to || 'Admin')}</div>
+                              <div className="text-sm text-muted-foreground">{getUserEmail(msg.toId, msg.to || 'Admin', msg.toEmail)}</div>
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell>
                           <div className="font-medium">{msg.subject}</div>
                         </TableCell>
                         <TableCell>
-                          <div className="max-w-xs truncate text-sm text-muted-foreground">{msg.message}</div>
+                          <div className="max-w-xs truncate text-sm text-muted-foreground">{msg.content || msg.message || 'No content'}</div>
                         </TableCell>
                         <TableCell>
-                          <div className="text-sm">{msg.timestamp}</div>
+                          <div className="text-sm">{msg.timestamp || msg.created_at || msg.createdAt || msg.time || 'Unknown time'}</div>
                         </TableCell>
                         <TableCell>
                           {!msg.read ? (
@@ -983,7 +1417,6 @@ const UserDashboard = () => {
               </CardContent>
             </Card>
           </TabsContent>
-
 
 
           {/* Profile Tab */}
@@ -1085,7 +1518,7 @@ const UserDashboard = () => {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold text-center">Edit Profile</DialogTitle>
-            <p className="text-muted-foreground text-center">Update your personal information</p>
+            <DialogDescription className="text-center">Update your personal information</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleUpdateProfile} className="space-y-6">
             <div className="space-y-4">
@@ -1146,7 +1579,7 @@ const UserDashboard = () => {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold text-center">Change Password</DialogTitle>
-            <p className="text-muted-foreground text-center">Update your account password</p>
+            <DialogDescription className="text-center">Update your account password</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleChangePassword} className="space-y-6">
             <div className="space-y-4">
@@ -1201,7 +1634,7 @@ const UserDashboard = () => {
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold text-center">Submit Service Request & Feedback</DialogTitle>
-            <p className="text-muted-foreground text-center">Submit your service request and provide feedback to help us improve</p>
+            <DialogDescription className="text-center">Submit your service request and provide feedback to help us improve</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmitServiceRequest} className="space-y-6">
             {/* Service Request Information */}
@@ -1348,20 +1781,25 @@ const UserDashboard = () => {
                       className="focus:outline-none"
                     >
                       <Star
-                        className={`h-6 w-6 ${star <= newServiceRequest.feedback.rating ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}`}
+                        className={`h-6 w-6 ${star <= (newServiceRequest.feedback?.rating ?? 0) ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}`}
                       />
                     </button>
                   ))}
                   <span className="ml-2 text-sm text-muted-foreground">
-                    {newServiceRequest.feedback.rating}/5 stars
+                    {(newServiceRequest.feedback?.rating ?? 0)}/5 stars
                   </span>
                 </div>
               </div>
               <div>
                 <Label htmlFor="satisfaction">Satisfaction Level</Label>
-                <Select value={newServiceRequest.feedback.satisfaction} onValueChange={(value) => setNewServiceRequest(prev => ({ 
+                <Select value={newServiceRequest.feedback?.satisfaction ?? ''} onValueChange={(value) => setNewServiceRequest(prev => ({ 
                   ...prev, 
-                  feedback: { ...prev.feedback, satisfaction: value }
+                  feedback: { 
+                    rating: prev.feedback?.rating ?? 0,
+                    comment: prev.feedback?.comment ?? '',
+                    satisfaction: value,
+                    improvement: prev.feedback?.improvement ?? ''
+                  }
                 }))}>
                   <SelectTrigger className="h-11 border-orange-500/20 focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20 transition-all duration-200">
                     <SelectValue placeholder="How satisfied are you with our services?" />
@@ -1380,10 +1818,15 @@ const UserDashboard = () => {
                 <Textarea
                   id="feedbackComment"
                   placeholder="Please share your thoughts about our services, what we're doing well, and areas for improvement..."
-                  value={newServiceRequest.feedback.comment}
+                  value={newServiceRequest.feedback?.comment ?? ''}
                   onChange={(e) => setNewServiceRequest(prev => ({ 
                     ...prev, 
-                    feedback: { ...prev.feedback, comment: e.target.value }
+                    feedback: { 
+                      rating: prev.feedback?.rating ?? 0,
+                      comment: e.target.value,
+                      satisfaction: prev.feedback?.satisfaction ?? '',
+                      improvement: prev.feedback?.improvement ?? ''
+                    }
                   }))}
                   className="min-h-[80px] border-orange-500/20 focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20 transition-all duration-200"
                 />
@@ -1393,10 +1836,15 @@ const UserDashboard = () => {
                 <Textarea
                   id="improvement"
                   placeholder="What could we do better? Any specific suggestions for improving our services?"
-                  value={newServiceRequest.feedback.improvement}
+                  value={newServiceRequest.feedback?.improvement ?? ''}
                   onChange={(e) => setNewServiceRequest(prev => ({ 
                     ...prev, 
-                    feedback: { ...prev.feedback, improvement: e.target.value }
+                    feedback: { 
+                      rating: prev.feedback?.rating ?? 0,
+                      comment: prev.feedback?.comment ?? '',
+                      satisfaction: prev.feedback?.satisfaction ?? '',
+                      improvement: e.target.value
+                    }
                   }))}
                   className="min-h-[80px] border-orange-500/20 focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/20 transition-all duration-200"
                 />
@@ -1420,7 +1868,7 @@ const UserDashboard = () => {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold text-center">Send New Message</DialogTitle>
-            <p className="text-muted-foreground text-center">Connect with our team for any questions or support</p>
+            <DialogDescription className="text-center">Connect with our team for any questions or support</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSendMessage} className="space-y-6">
             <div>
@@ -1473,7 +1921,7 @@ const UserDashboard = () => {
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold text-center">Submit New Project Request</DialogTitle>
-            <p className="text-muted-foreground text-center">Tell us about your project and we'll provide you with a detailed proposal</p>
+            <DialogDescription className="text-center">Tell us about your project and we'll provide you with a detailed proposal</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmitProject} className="space-y-6">
             {/* Project Basic Information */}
@@ -1625,6 +2073,10 @@ const UserDashboard = () => {
               {projectAction.type === 'view' ? 'View Project Details' : 
                projectAction.type === 'edit' ? 'Edit Project' : 'Delete Project'}
             </DialogTitle>
+            <DialogDescription>
+              {projectAction.type === 'view' ? 'Project details overview' : 
+               projectAction.type === 'edit' ? 'Update project information' : 'Confirm project deletion'}
+            </DialogDescription>
           </DialogHeader>
           
           {projectAction.type === 'view' && projectAction.project && (
@@ -1744,9 +2196,29 @@ const UserDashboard = () => {
               </Button>
             )}
             {projectAction.type === 'delete' && (
-              <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700" onClick={() => {
-                console.log('Delete project:', projectAction.project?.id);
-                setProjectAction({ open: false, type: '', project: null });
+              <Button className="bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800" onClick={async () => {
+                try {
+                  const { apiClient } = await import("@/lib/api");
+                  await apiClient.delete(`/userprojects/${projectAction.project?.id}`);
+                  console.log('Project deleted successfully');
+                  // Refresh projects list
+                  const res = await projectService.getProjects();
+                  if (res.success) {
+                    const currentUserId = (userData?.id ?? typedUser?.id) ? String(userData?.id ?? typedUser?.id) : undefined;
+                    const currentEmail = userData?.email ?? user?.email;
+                    const userProjects = (res.data || []).filter((project: any) => {
+                      const pid = project.clientId ?? project.client_id;
+                      const pEmail = project.clientEmail ?? project.client_email;
+                      return (currentUserId && String(pid) === currentUserId) || (currentEmail && pEmail === currentEmail);
+                    });
+                    setProjects(userProjects);
+                  }
+                  setProjectAction({ open: false, type: '', project: null });
+                  alert('Project deleted successfully!');
+                } catch (error) {
+                  console.error("Error deleting project:", error);
+                  alert("Error deleting project");
+                }
               }}>
                 Delete Project
               </Button>
@@ -1763,6 +2235,10 @@ const UserDashboard = () => {
               {serviceRequestAction.type === 'view' ? 'View Service Request Details' : 
                serviceRequestAction.type === 'edit' ? 'Edit Service Request' : 'Delete Service Request'}
             </DialogTitle>
+            <DialogDescription>
+              {serviceRequestAction.type === 'view' ? 'Service request details overview' : 
+               serviceRequestAction.type === 'edit' ? 'Update service request information' : 'Confirm service request deletion'}
+            </DialogDescription>
           </DialogHeader>
           
           {serviceRequestAction.type === 'view' && serviceRequestAction.request && (
@@ -1795,15 +2271,15 @@ const UserDashboard = () => {
                   <div className="flex items-center gap-2">
                     <div className="flex items-center">
                       {[1, 2, 3, 4, 5].map((star) => (
-                        <Star key={star} className={`h-4 w-4 ${star <= serviceRequestAction.request.feedback.rating ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
+                        <Star key={star} className={`h-4 w-4 ${star <= (serviceRequestAction.request?.feedback?.rating ?? 0) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
                       ))}
                     </div>
-                    <span className="text-sm">({serviceRequestAction.request.feedback.rating}/5)</span>
+                    <span className="text-sm">({(serviceRequestAction.request?.feedback?.rating ?? 0)}/5)</span>
                   </div>
-                  <Badge variant={serviceRequestAction.request.feedback.rating >= 4 ? "default" : serviceRequestAction.request.feedback.rating >= 3 ? "secondary" : "destructive"}>
-                    {serviceRequestAction.request.feedback.satisfaction}
+                  <Badge variant={(serviceRequestAction.request?.feedback?.rating ?? 0) >= 4 ? "default" : (serviceRequestAction.request?.feedback?.rating ?? 0) >= 3 ? "secondary" : "destructive"}>
+                    {serviceRequestAction.request?.feedback?.satisfaction ?? 'N/A'}
                   </Badge>
-                  <p className="text-sm">{serviceRequestAction.request.feedback.comment}</p>
+                  <p className="text-sm">{serviceRequestAction.request?.feedback?.comment ?? ''}</p>
                 </div>
               </div>
             </div>
@@ -1878,9 +2354,30 @@ const UserDashboard = () => {
               </Button>
             )}
             {serviceRequestAction.type === 'delete' && (
-              <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700" onClick={() => {
-                console.log('Delete service request:', serviceRequestAction.request?.id);
-                setServiceRequestAction({ open: false, type: '', request: null });
+              <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700" onClick={async () => {
+                try {
+                  // Call backend to delete service request
+                  const response = await fetch(`http://localhost:8000/api/user_service-requests/${serviceRequestAction.request?.id}`, {
+                    method: 'DELETE',
+                    headers: {
+                      'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+                      'Content-Type': 'application/json',
+                    },
+                  });
+                  
+                  if (response.ok) {
+                    // Remove from local state
+                    setServiceRequests(prev => prev.filter(r => r.id !== serviceRequestAction.request?.id));
+                    setServiceRequestAction({ open: false, type: '', request: null });
+                    console.log("Service request deleted successfully");
+                  } else {
+                    console.error("Failed to delete service request");
+                    alert("Failed to delete service request");
+                  }
+                } catch (error) {
+                  console.error("Error deleting service request:", error);
+                  alert("Error deleting service request");
+                }
               }}>
                 Delete Request
               </Button>
@@ -1897,14 +2394,18 @@ const UserDashboard = () => {
               {messageAction.type === 'view' ? 'View Message Details' : 
                messageAction.type === 'edit' ? 'Edit Message' : 'Delete Message'}
             </DialogTitle>
+            <DialogDescription>
+              {messageAction.type === 'view' ? 'Message details overview' : 
+               messageAction.type === 'edit' ? 'Update message content' : 'Confirm message deletion'}
+            </DialogDescription>
           </DialogHeader>
           
           {messageAction.type === 'view' && messageAction.message && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label className="text-sm font-medium text-muted-foreground">From</Label>
-                  <p className="text-sm">{messageAction.message.from}</p>
+                  <Label className="text-sm font-medium text-muted-foreground">Recipient</Label>
+                  <p className="text-sm">{messageAction.message.to || 'Admin'}</p>
                 </div>
                 <div>
                   <Label className="text-sm font-medium text-muted-foreground">Status</Label>
@@ -1969,9 +2470,30 @@ const UserDashboard = () => {
               </Button>
             )}
             {messageAction.type === 'delete' && (
-              <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700" onClick={() => {
-                console.log('Delete message:', messageAction.message?.id);
-                setMessageAction({ open: false, type: '', message: null });
+              <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700" onClick={async () => {
+                try {
+                  // Call backend to delete message
+                  const response = await fetch(`http://localhost:8000/api/usermessages/${messageAction.message?.id}`, {
+                    method: 'DELETE',
+                    headers: {
+                      'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+                      'Content-Type': 'application/json',
+                    },
+                  });
+                  
+                  if (response.ok) {
+                    // Remove from local state
+                    setMessages(prev => prev.filter(m => m.id !== messageAction.message?.id));
+                    setMessageAction({ open: false, type: '', message: null });
+                    console.log("Message deleted successfully");
+                  } else {
+                    console.error("Failed to delete message");
+                    alert("Failed to delete message");
+                  }
+                } catch (error) {
+                  console.error("Error deleting message:", error);
+                  alert("Error deleting message");
+                }
               }}>
                 Delete Message
               </Button>
@@ -1988,6 +2510,10 @@ const UserDashboard = () => {
               {newProjectAction.type === 'view' ? 'View Project Request Details' : 
                newProjectAction.type === 'edit' ? 'Edit Project Request' : 'Delete Project Request'}
             </DialogTitle>
+            <DialogDescription>
+              {newProjectAction.type === 'view' ? 'Project request details overview' : 
+               newProjectAction.type === 'edit' ? 'Update project request information' : 'Confirm project request deletion'}
+            </DialogDescription>
           </DialogHeader>
           
           {newProjectAction.type === 'view' && newProjectAction.project && (
@@ -2088,9 +2614,30 @@ const UserDashboard = () => {
               </Button>
             )}
             {newProjectAction.type === 'delete' && (
-              <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700" onClick={() => {
-                console.log('Delete project request:', newProjectAction.project?.id);
-                setNewProjectAction({ open: false, type: '', project: null });
+              <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700" onClick={async () => {
+                try {
+                  // Call backend to delete project request
+                  const response = await fetch(`http://localhost:8000/api/userprojects/${newProjectAction.project?.id}`, {
+                    method: 'DELETE',
+                    headers: {
+                      'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+                      'Content-Type': 'application/json',
+                    },
+                  });
+                  
+                  if (response.ok) {
+                    // Remove from local state
+                    setUserProjectRequests(prev => prev.filter(p => p.id !== newProjectAction.project?.id));
+                    setNewProjectAction({ open: false, type: '', project: null });
+                    console.log("Project request deleted successfully");
+                  } else {
+                    console.error("Failed to delete project request");
+                    alert("Failed to delete project request");
+                  }
+                } catch (error) {
+                  console.error("Error deleting project request:", error);
+                  alert("Error deleting project request");
+                }
               }}>
                 Delete Request
               </Button>
@@ -2104,11 +2651,12 @@ const UserDashboard = () => {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Notifications</DialogTitle>
+            <DialogDescription>Recent updates and alerts</DialogDescription>
           </DialogHeader>
           <div className="space-y-3 max-h-96 overflow-y-auto">
-            {notifications.length === 0 ? (
-              <p className="text-muted-foreground">No notifications.</p>
-            ) : notifications.map((notification) => (
+            {notificationsList.length === 0 ? (
+              <DialogDescription>No notifications.</DialogDescription>
+            ) : notificationsList.map((notification: any) => (
               <div key={notification.id} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
                 <div className={`w-2 h-2 rounded-full mt-2 ${
                   notification.type === "success" ? "bg-green-500" :
@@ -2116,10 +2664,18 @@ const UserDashboard = () => {
                 }`} />
                 <div className="flex-1">
                   <p className="text-sm">{notification.message}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{notification.time}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{new Date(notification.createdAt || notification.created_at).toLocaleString()}</p>
                 </div>
+                {!notification.isRead && (
+                  <Button size="sm" variant="ghost" onClick={() => markNotificationAsRead(String(notification.id))}>Mark read</Button>
+                )}
               </div>
             ))}
+            {notificationsList.length > 0 && (
+              <div className="pt-2">
+                <Button variant="outline" size="sm" onClick={markAllNotificationsAsRead}>Mark all as read</Button>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

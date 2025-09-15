@@ -108,8 +108,8 @@ const SEO = ({ page }: { page: keyof typeof seoConfig }) => {
 };
 
 export const UserContext = createContext<{
-  user: { email: string; role: string; profilePic?: string } | null;
-  setUser: (user: { email: string; role: string; profilePic?: string } | null) => void;
+  user: { id?: string; name?: string; email: string; role: string; profilePic?: string; phone?: string; company?: string } | null;
+  setUser: (user: { id?: string; name?: string; email: string; role: string; profilePic?: string; phone?: string; company?: string } | null) => void;
 }>({
   user: null,
   setUser: () => {},
@@ -118,7 +118,7 @@ export const UserContext = createContext<{
 const queryClient = new QueryClient();
 
 function App() {
-  const [user, setUser] = useState<{ email: string; role: string; profilePic?: string } | null>(null);
+  const [user, setUser] = useState<{ id?: string; name?: string; email: string; role: string; profilePic?: string; phone?: string; company?: string } | null>(null);
   const [currentPage, setCurrentPage] = useState<keyof typeof seoConfig>('home');
 
   // Update current page for SEO
@@ -128,6 +128,39 @@ function App() {
     else if (path === '/about') setCurrentPage('about');
     else if (path === '/contact') setCurrentPage('contact');
     else if (path.startsWith('/services')) setCurrentPage('services');
+  }, []);
+
+  // Hydrate user from localStorage and/or backend profile if token exists
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('authUser');
+      if (stored) {
+        setUser(JSON.parse(stored));
+      }
+    } catch {}
+    // If authenticated, try to fetch profile for freshest user data
+    import("@/lib/api").then(({ auth }) => {
+      if (auth.isAuthenticated()) {
+        import("@/lib/services").then(({ userService }) => {
+          userService.getProfile().then(res => {
+            if (res.success && res.data) {
+              const profile = Array.isArray(res.data) ? res.data[0] : res.data;
+              setUser((prev) => {
+                const merged = { ...(prev || {}), ...profile } as any;
+                try { localStorage.setItem('authUser', JSON.stringify(merged)); } catch {}
+                return merged;
+              });
+            }
+          }).catch((error) => {
+            console.warn('Failed to fetch user profile:', error);
+          });
+        }).catch((error) => {
+          console.warn('Failed to import userService:', error);
+        });
+      }
+    }).catch((error) => {
+      console.warn('Failed to import auth:', error);
+    });
   }, []);
 
   return (

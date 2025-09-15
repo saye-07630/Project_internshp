@@ -14,13 +14,14 @@ use App\Http\Controllers\UserServiceRequestController;
 use App\Http\Controllers\UserMessageController;
 use App\Http\Controllers\RatingController;
 use App\Http\Controllers\Api\OverviewController;
-use App\Http\Controllers\Api\BlogController;
+use App\Http\Controllers\BlogController;
 use App\Http\Controllers\Api\MessageController;
-use App\Http\Controllers\Api\ProjectController;
+use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\Api\ServiceRequestController;
 use App\Http\Controllers\Api\ProjectProgressController;
-use App\Http\Controllers\Api\TeamMemberController;
-use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\TeamMemberController;
+use App\Http\Controllers\ProfileController;
 
 /*
 |--------------------------------------------------------------------------
@@ -94,45 +95,51 @@ Route::get('/contact', function () {
     ]);
 });
 
-Route::get('/blog', function () {
+Route::get('/blog', [BlogController::class, 'index']);
+
+// Test route to verify API is working
+Route::get('/test', function () {
+    return response()->json(['message' => 'API is working', 'timestamp' => now()]);
+});
+
+// Debug route for message testing
+Route::post('/debug/message', function (Request $request) {
     return response()->json([
-        ['id' => 1, 'title' => 'First Blog Post', 'category' => 'General'],
-        ['id' => 2, 'title' => 'Why Choose Hawi Software?', 'category' => 'Business'],
+        'received_data' => $request->all(),
+        'headers' => $request->headers->all(),
+        'method' => $request->method(),
+        'content_type' => $request->header('Content-Type')
     ]);
 });
 
-// ================== USER ROUTES ==================
+// ================== USER ROUTES (secured) ==================
 Route::middleware('auth:sanctum')->group(function () {
     // User
-        Route::get('/user', [ApiUserController::class, 'index']);
-        Route::get('/user/{id}', [ApiUserController::class, 'show']);
+    Route::get('/user', [ApiUserController::class, 'index']);
+    Route::get('/user/{id}', [ApiUserController::class, 'show']);
     Route::put('/user', [ApiUserController::class, 'update']);
 
-    // Projects
+    // Projects (user-specific)
     Route::apiResource('userprojects', UserProjectController::class)->only(['index', 'show', 'store']);
 
-    // Service Requests
+    // Service Requests (user-specific)
     Route::apiResource('user_service-requests', UserServiceRequestController::class);
 
-    // Messages
-    Route::get('/usermessages', [UserMessageController::class, 'index']);
-    Route::post('/usermessages', [UserMessageController::class, 'store']);
-    Route::get('/usermessages/{usermessage}', [UserMessageController::class, 'show']);
-
-    // Feedback
-    Route::get('/rating', [RatingController::class, 'index']);
-    Route::post('/rating', [RatingController::class, 'store']);
+    // Messages (user-specific)
+    Route::apiResource('usermessages', UserMessageController::class);
 });
+
+// Feedback
+Route::get('/rating', [RatingController::class, 'index']);
+Route::post('/rating', [RatingController::class, 'store']);
 
 // ================== ADMIN ROUTES ==================
 
 // Overview
 Route::get('/overview', [OverviewController::class, 'index']);
 
-// User Management
-Route::middleware('auth:sanctum')->group(function () {
-    Route::apiResource('users', ApiUserController::class);   // ✅ now using alias
-});
+// User Management (temporarily public for testing)
+Route::apiResource('users', ApiUserController::class);   // ✅ now using alias
 
 // Team Members
 Route::apiResource('team-members', TeamMemberController::class);
@@ -140,10 +147,8 @@ Route::post('team-members/bulk-update', [TeamMemberController::class, 'bulkUpdat
 Route::post('team-members/bulk-delete', [TeamMemberController::class, 'bulkDelete']);
 Route::get('team-members/stats', [TeamMemberController::class, 'stats']);
 
-// Project Progress Updates
-Route::middleware('auth:sanctum')->group(function () {
-    Route::apiResource('progress-updates', ProjectProgressController::class);
-});
+// Project Progress Updates (temporarily public for testing)
+Route::apiResource('progress-updates', ProjectProgressController::class);
 
 // Project Requests
 Route::prefix('admin/projects')->group(function () {
@@ -159,8 +164,8 @@ Route::prefix('admin/services')->group(function () {
     Route::delete('/{id}', [ServiceRequestController::class, 'destroy']);
 });
 
-// Messages
-Route::middleware('auth:sanctum')->prefix('admin/messages')->group(function () {
+// Messages (temporarily public for testing)
+Route::prefix('admin/messages')->group(function () {
     Route::get('/', [MessageController::class, 'index']);          
     Route::post('/', [MessageController::class, 'store']);         
     Route::patch('/{id}/read', [MessageController::class, 'markAsRead']); 
@@ -169,12 +174,26 @@ Route::middleware('auth:sanctum')->prefix('admin/messages')->group(function () {
 });
 
 // Blogs
-Route::apiResource('blogs', BlogController::class);
-Route::post('blogs/{id}/increment-views', [BlogController::class, 'incrementViews']);
-Route::post('blogs/{id}/increment-likes', [BlogController::class, 'incrementLikes'])->middleware('auth:sanctum');
+Route::apiResource('blog', BlogController::class);
+Route::post('blog/{id}/increment-views', [BlogController::class, 'incrementViews']);
+Route::post('blog/{id}/increment-likes', [BlogController::class, 'incrementLikes'])->middleware('auth:sanctum');
 
 // User Profile
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/profile', [ProfileController::class, 'show']);      
     Route::post('/profile', [ProfileController::class, 'update']);   
 });
+
+// Notifications
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/notifications', [NotificationController::class, 'index']);
+    Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+    Route::post('/notifications/read-all', [NotificationController::class, 'markAllAsRead']);
+    Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
+});
+
+// Admin notification creation (for creating notifications for users)
+Route::post('/notifications', [NotificationController::class, 'create']);
+
+// Admin notifications
+Route::get('/admin/notifications', [NotificationController::class, 'adminIndex']);

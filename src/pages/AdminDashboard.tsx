@@ -56,7 +56,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
@@ -69,14 +69,132 @@ const AdminDashboard = () => {
   const [users, setUsers] = useState<any[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
   const [usersError, setUsersError] = useState("");
+
+  // Helper function to get user name by ID or email
+  const getUserName = (userId: any, userEmail: any, fallbackName: any) => {
+    if (fallbackName && fallbackName !== 'Unknown' && fallbackName !== 'Unknown Client' && fallbackName !== 'Unknown User') {
+      return fallbackName;
+    }
+    
+    if (userId !== undefined && userId !== null) {
+      const user = users.find(u => String(u.id) === String(userId));
+      if (user) return user.name || `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || user.email || String(user.id);
+    }
+    
+    if (userEmail) {
+      const user = users.find(u => u.email === userEmail);
+      if (user) return user.name || `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || user.email;
+    }
+    
+    if (typeof userEmail === 'string' && userEmail) return userEmail;
+    if (userId !== undefined && userId !== null) return String(userId);
+    return 'Unknown User';
+  };
+
+  // Helper function to get user email by ID or name
+  const getUserEmail = (userId: any, userName: any, fallbackEmail: any) => {
+    if (fallbackEmail && fallbackEmail !== 'No email') {
+      return fallbackEmail;
+    }
+    
+    if (userId !== undefined && userId !== null) {
+      const user = users.find(u => String(u.id) === String(userId));
+      if (user) return user.email || 'No email';
+    }
+    
+    if (userName) {
+      const user = users.find(u => u.name === userName || (`${u.first_name ?? ''} ${u.last_name ?? ''}`).trim() === userName || u.email === userName);
+      if (user) return user.email || 'No email';
+    }
+    
+    return (typeof userName === 'string' && userName.includes('@')) ? userName : 'No email';
+  };
   const [teamMembers, setTeamMembers] = useState<any[]>([]); // Initialize team members
   const [teamLoading, setTeamLoading] = useState(true);
   const [teamError, setTeamError] = useState("");
+  
+  // Overview data state
+  const [overviewData, setOverviewData] = useState<any>(null);
+  const [overviewLoading, setOverviewLoading] = useState(true);
+  const [overviewError, setOverviewError] = useState("");
+  
+  // Message form state
+  const [messageData, setMessageData] = useState({
+    recipient: "",
+    subject: "",
+    content: ""
+  });
+  
+  // Blog form state
+  const [blogTitle, setBlogTitle] = useState("");
+  const [blogAuthor, setBlogAuthor] = useState("");
+  const [blogDate, setBlogDate] = useState("");
+  const [blogStatus, setBlogStatus] = useState("");
+  const [blogCategory, setBlogCategory] = useState("");
+  const [blogImage, setBlogImage] = useState("");
+  const [blogContent, setBlogContent] = useState("");
+  const [blogSubmitting, setBlogSubmitting] = useState(false);
+
+  // Refresh functions for real-time updates
+  const refreshUsers = async () => {
+    setUsersLoading(true);
+    try {
+      const { adminService } = await import("@/lib/services");
+      const res = await adminService.getUsers({ page: 1, limit: 100 });
+      if (res.success) {
+        setUsers(res.data || []);
+        setUsersError("");
+      } else {
+        setUsersError(res.error || "Failed to load users");
+      }
+    } catch (error) {
+      setUsersError("Failed to load users");
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  const refreshTeamMembers = async () => {
+    setTeamLoading(true);
+    try {
+      const { adminService } = await import("@/lib/services");
+      const res = await adminService.getTeam();
+      if (res.success) {
+        setTeamMembers(res.data || []);
+        setTeamError("");
+      } else {
+        setTeamError(res.error || "Failed to load team members");
+      }
+    } catch (error) {
+      setTeamError("Failed to load team members");
+    } finally {
+      setTeamLoading(false);
+    }
+  };
+
+  const refreshProgressUpdates = async () => {
+    setProgressUpdatesLoading(true);
+    try {
+      const { apiClient } = await import("@/lib/api");
+      const res = await apiClient.get('/progress-updates');
+      if (Array.isArray(res)) {
+        setProgressUpdates(res || []);
+        setProgressUpdatesError("");
+      } else {
+        setProgressUpdatesError("Failed to load progress updates");
+      }
+    } catch (error) {
+      setProgressUpdatesError("Failed to load progress updates");
+    } finally {
+      setProgressUpdatesLoading(false);
+    }
+  };
 
   // Fetch users and team members from backend
   useEffect(() => {
     setUsersLoading(true);
     setTeamLoading(true);
+    setOverviewLoading(true);
     import("@/lib/services").then(({ adminService }) => {
       adminService.getUsers({ page: 1, limit: 100 }).then(res => {
         if (res.success) {
@@ -101,6 +219,18 @@ const AdminDashboard = () => {
       }).catch(() => {
         setTeamError("Failed to load team members");
         setTeamLoading(false);
+      });
+      adminService.getAnalytics().then(res => {
+        if (res.success) {
+          setOverviewData(res.data);
+          setOverviewError("");
+        } else {
+          setOverviewError(res.error || "Failed to load overview data");
+        }
+        setOverviewLoading(false);
+      }).catch(() => {
+        setOverviewError("Failed to load overview data");
+        setOverviewLoading(false);
       });
     });
   }, []);
@@ -168,18 +298,15 @@ const AdminDashboard = () => {
   const [blogAction, setBlogAction] = useState({ open: false, type: '', post: null });
   const [addPostOpen, setAddPostOpen] = useState(false);
   const [adminProfileOpen, setAdminProfileOpen] = useState(false);
-  const [notifications, setNotifications] = useState([
-    { id: 1, message: "New user registered", time: "1 hour ago", type: "info" },
-    { id: 2, message: "Project deadline approaching", time: "3 hours ago", type: "warning" },
-    { id: 3, message: "Service request approved", time: "Today", type: "success" }
-  ]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
   const { user, setUser } = useContext(UserContext);
-  const [adminProfilePic, setAdminProfilePic] = useState(user?.profilePic || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face");
+  const [adminProfilePic, setAdminProfilePic] = useState(user?.profilePic || "http://localhost:8000/admin-profile.jpg");
   const [adminProfileEdit, setAdminProfileEdit] = useState(false);
   const [adminProfileData, setAdminProfileData] = useState({
-    name: "Admin",
-    email: "admin@hawisoftware.com",
-    role: "System Administrator"
+    name: user?.name || "Admin",
+    email: user?.email || "admin@hawisoftware.com",
+    role: user?.role || "System Administrator"
   });
 
   // New Project Form State
@@ -320,7 +447,9 @@ const AdminDashboard = () => {
         name: newUser.fullName,
         email: newUser.email,
         password: "changeme123", // Default password
-        company: newUser.department,
+        role: "Team Member", // Default role
+        department: newUser.department,
+        status: "Active", // Default status
         phone: newUser.phone
       });
       if (response.success) {
@@ -336,6 +465,8 @@ const AdminDashboard = () => {
         setUserFormErrors({});
         setAddUserOpen(false);
         alert("Team member created successfully!");
+        // Refresh team members list
+        refreshTeamMembers();
       } else {
         alert(response.error || "Error creating team member. Please try again.");
       }
@@ -364,6 +495,7 @@ const AdminDashboard = () => {
         name: newUserForUsersTab.fullName,
         email: newUserForUsersTab.email,
         password: newUserForUsersTab.password,
+        password_confirmation: newUserForUsersTab.password,
         company: newUserForUsersTab.company,
         phone: newUserForUsersTab.phone
       });
@@ -381,6 +513,8 @@ const AdminDashboard = () => {
         });
         setAddUserForUsersTabOpen(false);
         alert("User created successfully!");
+        // Refresh users list
+        refreshUsers();
       } else {
         alert(response.error || "Error creating user. Please try again.");
       }
@@ -616,20 +750,68 @@ const AdminDashboard = () => {
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsError, setProjectsError] = useState("");
 
+  // Progress updates state
+  const [progressUpdates, setProgressUpdates] = useState<any[]>([]);
+  const [progressUpdatesLoading, setProgressUpdatesLoading] = useState(true);
+  const [progressUpdatesError, setProgressUpdatesError] = useState("");
+
+  // User project requests state (projects created by users that need admin approval)
+  const [userProjectRequests, setUserProjectRequests] = useState<any[]>([]);
+  const [userProjectRequestsLoading, setUserProjectRequestsLoading] = useState(true);
+  const [userProjectRequestsError, setUserProjectRequestsError] = useState("");
+
   useEffect(() => {
     setProjectsLoading(true);
-    import("@/lib/services").then(({ projectService }) => {
-      projectService.getProjects({ page: 1, limit: 100 }).then(res => {
-        if (res.success) {
-          setProjects(res.data || []);
+    import("@/lib/api").then(({ apiClient }) => {
+      apiClient.get('/admin/projects').then(res => {
+        if (Array.isArray(res)) {
+          setProjects(res || []);
           setProjectsError("");
         } else {
-          setProjectsError(res.error || "Failed to load projects");
+          setProjectsError("Failed to load projects");
         }
         setProjectsLoading(false);
       }).catch(() => {
         setProjectsError("Failed to load projects");
         setProjectsLoading(false);
+      });
+    });
+  }, []);
+
+  // Fetch progress updates
+  useEffect(() => {
+    setProgressUpdatesLoading(true);
+    import("@/lib/api").then(({ apiClient }) => {
+      apiClient.get('/progress-updates').then(res => {
+        if (Array.isArray(res)) {
+          setProgressUpdates(res || []);
+          setProgressUpdatesError("");
+        } else {
+          setProgressUpdatesError("Failed to load progress updates");
+        }
+        setProgressUpdatesLoading(false);
+      }).catch(() => {
+        setProgressUpdatesError("Failed to load progress updates");
+        setProgressUpdatesLoading(false);
+      });
+    });
+  }, []);
+
+  // Fetch user project requests from admin endpoint
+  useEffect(() => {
+    setUserProjectRequestsLoading(true);
+    import("@/lib/api").then(({ apiClient }) => {
+      apiClient.get('/admin/projects').then(res => {
+        if (Array.isArray(res)) {
+          setUserProjectRequests(res || []);
+          setUserProjectRequestsError("");
+        } else {
+          setUserProjectRequestsError("Failed to load user project requests");
+        }
+        setUserProjectRequestsLoading(false);
+      }).catch(() => {
+        setUserProjectRequestsError("Failed to load user project requests");
+        setUserProjectRequestsLoading(false);
       });
     });
   }, []);
@@ -641,13 +823,13 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     setServiceRequestsLoading(true);
-    import("@/lib/services").then(({ serviceRequestService }) => {
-      serviceRequestService.getServiceRequests({ page: 1, limit: 100 }).then(res => {
-        if (res.success) {
-          setServiceRequests(res.data || []);
+    import("@/lib/api").then(({ apiClient }) => {
+      apiClient.get('/admin/services').then(res => {
+        if (Array.isArray(res)) {
+          setServiceRequests(res || []);
           setServiceRequestsError("");
         } else {
-          setServiceRequestsError(res.error || "Failed to load service requests");
+          setServiceRequestsError("Failed to load service requests");
         }
         setServiceRequestsLoading(false);
       }).catch(() => {
@@ -667,7 +849,7 @@ const AdminDashboard = () => {
   useEffect(() => {
     setBlogPostsLoading(true);
     import("@/lib/services").then(({ blogService }) => {
-      blogService.getBlogPosts({ page: 1, limit: 100 }).then(res => {
+      blogService.getBlogPosts({ page: 1, limit: 100, includeAll: true }).then(res => {
         if (res.success) {
           setBlogPosts(res.data || []);
           setBlogPostsError("");
@@ -709,8 +891,17 @@ const AdminDashboard = () => {
     const { blogService } = await import("@/lib/services");
     const res = await blogService.createBlogPost(payload);
     if (res.success) {
-      setBlogPosts([res.data, ...blogPosts]);
+      // Refresh the blog posts list
+      const { blogService: refreshService } = await import("@/lib/services");
+      const refreshRes = await refreshService.getBlogPosts({ includeAll: true });
+      if (refreshRes.success) {
+        setBlogPosts(refreshRes.data || []);
+      } else {
+        // Fallback: add the new post to the existing list
+        setBlogPosts([res.data, ...blogPosts]);
+      }
       setBlogPostsError("");
+      setAddPostOpen(false); // Close the dialog
     } else {
       setBlogPostsError(res.error || "Failed to create blog post");
     }
@@ -724,18 +915,36 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     setMessagesLoading(true);
-    import("@/lib/services").then(({ messageService }) => {
-      messageService.getMessages({ page: 1, limit: 100 }).then(res => {
-        if (res.success) {
-          setMessages(res.data || []);
+    import("@/lib/api").then(({ apiClient }) => {
+      apiClient.get('/admin/messages').then((res: import("@/lib/api").ApiResponse<any>) => {
+        if (res.success && Array.isArray(res.data)) {
+          setMessages(res.data);
           setMessagesError("");
         } else {
-          setMessagesError(res.error || "Failed to load messages");
+          setMessagesError("Failed to load messages");
         }
         setMessagesLoading(false);
       }).catch(() => {
         setMessagesError("Failed to load messages");
         setMessagesLoading(false);
+      });
+    });
+  }, []);
+
+  // Fetch notifications from backend
+  useEffect(() => {
+    setNotificationsLoading(true);
+    import("@/lib/api").then(({ apiClient }) => {
+      apiClient.get('/admin/notifications').then((res: import("@/lib/api").ApiResponse<any>) => {
+        if (res.success) {
+          setNotifications(res.data || []);
+        } else {
+          console.error('Failed to load notifications:', res.error);
+        }
+        setNotificationsLoading(false);
+      }).catch((error) => {
+        console.error('Error loading notifications:', error);
+        setNotificationsLoading(false);
       });
     });
   }, []);
@@ -759,11 +968,11 @@ const AdminDashboard = () => {
             <Button variant="ghost" size="icon" className="relative" onClick={() => setNotificationOpen(true)}>
               <Bell className="h-5 w-5" />
               <Badge className="absolute -top-1 -right-1 w-4 h-4 rounded-full p-0 flex items-center justify-center text-xs">
-                {notifications.length}
+                {Array.isArray(notifications) ? notifications.length : 0}
               </Badge>
             </Button>
             <Avatar onClick={() => setAdminProfileOpen(true)} className="cursor-pointer">
-              <AvatarImage src={user?.profilePic || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face"} />
+              <AvatarImage src={(user as any)?.profilePic || (user as any)?.profile_picture || adminProfilePic || "http://localhost:8000/admin-profile.jpg"} />
               <AvatarFallback>AD</AvatarFallback>
             </Avatar>
             <AlertDialog>
@@ -830,8 +1039,8 @@ const AdminDashboard = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-muted-foreground">Active Projects</p>
-                      <p className="text-3xl font-bold">24</p>
-                      <p className="text-sm text-blue-600">8 in review</p>
+                      <p className="text-3xl font-bold">{overviewData?.stats?.active_projects || 0}</p>
+                      <p className="text-sm text-blue-600">In progress</p>
                     </div>
                     <FolderOpen className="h-8 w-8 text-blue-500" />
                   </div>
@@ -843,7 +1052,7 @@ const AdminDashboard = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-muted-foreground">Pending Requests</p>
-                      <p className="text-3xl font-bold">7</p>
+                      <p className="text-3xl font-bold">{overviewData?.stats?.pending_requests || 0}</p>
                       <p className="text-sm text-yellow-600">Needs attention</p>
                     </div>
                     <AlertTriangle className="h-8 w-8 text-yellow-500" />
@@ -899,8 +1108,8 @@ const AdminDashboard = () => {
                   {serviceRequests.slice(0, 3).map((request) => (
                     <div key={request.id} className="flex items-start justify-between p-3 rounded-lg bg-muted/50">
                       <div className="flex-1">
-                        <h4 className="font-medium">{request.title}</h4>
-                        <p className="text-sm text-muted-foreground">From: {request.client}</p>
+                        <h4 className="font-medium">{request.request_title || request.title}</h4>
+                        <p className="text-sm text-muted-foreground">From: {request.client_name || request.client}</p>
                         <div className="flex items-center gap-2 mt-1">
                           <Badge variant={request.status === "Open" ? "destructive" : request.status === "In Progress" ? "default" : "secondary"}>
                             {request.status}
@@ -950,7 +1159,7 @@ const AdminDashboard = () => {
                           <TableCell>
                             <div className="flex items-center gap-3">
                               <Avatar>
-                              <AvatarFallback>{user.name.split(' ').map(n => n[0]).join('')}</AvatarFallback>
+                              <AvatarFallback>{(user.name || 'Unknown').split(' ').map(n => n[0]).join('')}</AvatarFallback>
                               </Avatar>
                               <div>
                                 <p className="font-medium">{user.name}</p>
@@ -1125,7 +1334,7 @@ const AdminDashboard = () => {
                           <div className="flex items-center gap-3">
                             <Avatar>
                               <AvatarImage src={member.profilePic} />
-                              <AvatarFallback>{member.name.split(' ').map(n => n[0]).join('')}</AvatarFallback>
+                              <AvatarFallback>{(member.name || 'Unknown').split(' ').map(n => n[0]).join('')}</AvatarFallback>
                             </Avatar>
                             <div>
                               <button 
@@ -1254,54 +1463,58 @@ const AdminDashboard = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {[
-                      {
-                        id: 1,
-                        from: "Hana Kebede",
-                        email: "hani@example.com",
-                        subject: "Project Update Request",
-                        content: "Hi, I would like to know the current status of my e-commerce project...",
-                        time: "2 hours ago",
-                        status: "Unread"
-                      },
-                      {
-                        id: 2,
-                        from: "John Doe",
-                        email: "john@example.com",
-                        subject: "Feature Implementation",
-                        content: "Thank you for the recent update. The new features look great...",
-                        time: "1 day ago",
-                        status: "Read"
-                      },
-                      {
-                        id: 3,
-                        from: "Sarah Johnson",
-                        email: "sarah@example.com",
-                        subject: "Bug Report",
-                        content: "I found a small issue with the login functionality...",
-                        time: "3 days ago",
-                        status: "Read"
-                      }
-                    ].map((message) => (
+                    {messagesLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8">
+                          <div className="flex items-center justify-center space-x-2">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                            <span>Loading messages...</span>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : messagesError ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-red-500">
+                          {messagesError}
+                        </TableCell>
+                      </TableRow>
+                    ) : messages.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          No messages found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      messages.map((message) => (
                       <TableRow key={message.id}>
                         <TableCell>
                           <div className="flex items-center space-x-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=32&h=32&fit=crop&crop=face" />
-                              <AvatarFallback>{message.from.split(' ').map(n => n[0]).join('')}</AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <div className="font-medium">{message.from}</div>
-                              <div className="text-sm text-muted-foreground">{message.email}</div>
-                            </div>
+                            {(() => {
+                              // Use sender_id if fromId is not present
+                              const senderId = message.fromId ?? message.sender_id;
+                              const sender = users.find(u => String(u.id) === String(senderId));
+                              const name = sender ? sender.name || sender.email || `User #${sender.id}` : (message.fromName || message.from || 'Unknown User');
+                              const email = sender ? sender.email : (message.sender_email || message.email || 'No email');
+                              return (
+                                <>
+                                  <Avatar className="h-8 w-8">
+                                    <AvatarFallback>{name.split(' ').map(n => n[0]).join('')}</AvatarFallback>
+                                  </Avatar>
+                                  <div>
+                                    <div className="font-medium">{name}</div>
+                                    <div className="text-sm text-muted-foreground">{email}</div>
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </div>
                         </TableCell>
-                        <TableCell className="font-medium">{message.subject}</TableCell>
-                        <TableCell className="max-w-xs truncate">{message.content}</TableCell>
-                        <TableCell>{message.time}</TableCell>
+                        <TableCell className="font-medium">{message.subject || 'No subject'}</TableCell>
+                        <TableCell className="max-w-xs truncate">{message.content || message.message || 'No content'}</TableCell>
+                        <TableCell>{message.created_at || message.timestamp || message.time || 'Unknown time'}</TableCell>
                         <TableCell>
-                          <Badge variant={message.status === "Unread" ? "destructive" : "secondary"}>
-                            {message.status}
+                          <Badge variant={message.status === "Unread" || message.read === false ? "destructive" : "secondary"}>
+                            {message.status || (message.read === false ? "Unread" : "Read")}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -1311,8 +1524,8 @@ const AdminDashboard = () => {
                             </Button>
                             <Button variant="ghost" size="icon" onClick={() => {
                               setResponseMessageData({
-                                to: message.email,
-                                subject: `Re: ${message.subject}`,
+                                to: message.sender_email || message.email || '',
+                                subject: `Re: ${message.subject || ''}`,
                                 message: ""
                               });
                               setResponseMessageOpen(true);
@@ -1343,7 +1556,8 @@ const AdminDashboard = () => {
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                      ))
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -1376,7 +1590,29 @@ const AdminDashboard = () => {
                       </TableRow>
                     </TableHeader>
                   <TableBody>
-                    {blogPosts.map((post) => (
+                    {blogPostsLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center py-8">
+                          <div className="flex items-center justify-center space-x-2">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                            <span>Loading blog posts...</span>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : blogPostsError ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center py-8 text-red-500">
+                          {blogPostsError}
+                        </TableCell>
+                      </TableRow>
+                    ) : blogPosts.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                          No blog posts found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      blogPosts.map((post) => (
                       <TableRow key={post.id}>
                         <TableCell className="font-medium">{post.title}</TableCell>
                         <TableCell>{post.author}</TableCell>
@@ -1422,7 +1658,8 @@ const AdminDashboard = () => {
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                      ))
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -1457,83 +1694,106 @@ const AdminDashboard = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {projects.map((project) => (
-                      <TableRow key={project.id}>
-                        <TableCell>
-                          <div className="flex items-center space-x-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=32&h=32&fit=crop&crop=face" />
-                              <AvatarFallback>{project.client.split(' ').map(n => n[0]).join('')}</AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <div className="font-medium">{project.client}</div>
-                              <div className="text-sm text-muted-foreground">Client</div>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div>
-                            <div className="font-medium">{project.name}</div>
-                            <div className="text-sm text-muted-foreground">Project</div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center space-x-2">
-                            <Progress value={project.progress} className="w-16" />
-                            <span className="text-sm">{project.progress}%</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={project.status === "In Progress" ? "default" : project.status === "Review" ? "secondary" : "outline"}>
-                            {project.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{project.deadline}</TableCell>
-                        <TableCell>{project.deadline}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Button variant="ghost" size="icon" onClick={() => {
-                              setProgressData({
-                                clientId: project.client,
-                                projectId: project.name,
-                                progressPercentage: project.progress.toString(),
-                                completedMilestones: "Phase 1, Phase 2",
-                                currentStatus: project.status,
-                                                                 nextDeadline: project.deadline,
-                                lastUpdate: "2024-01-15",
-                                notes: "",
-                                attachments: []
-                              });
-                              setSendProgressOpen(true);
-                            }}>
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="icon">
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Delete Progress Update?</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    This action cannot be undone. The progress update for {project.name} will be permanently deleted.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction onClick={() => {
-                                    console.log('Delete progress update:', project.id);
-                                    alert(`Progress update for ${project.name} has been deleted successfully.`);
-                                  }}>Delete</AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
+                    {progressUpdatesLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8">
+                          <div className="flex items-center justify-center space-x-2">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                            <span>Loading progress updates...</span>
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : progressUpdatesError ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8 text-red-500">
+                          {progressUpdatesError}
+                        </TableCell>
+                      </TableRow>
+                    ) : progressUpdates.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                          No progress updates sent yet
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      progressUpdates.map((update) => (
+                        <TableRow key={update.id}>
+                          <TableCell>
+                            <div className="flex items-center space-x-3">
+                              <Avatar className="h-8 w-8">
+                                <AvatarImage src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=32&h=32&fit=crop&crop=face" />
+                                <AvatarFallback>{getUserName(update.client_id, update.client_email, update.client_name).split(' ').map(n => n[0]).join('')}</AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <div className="font-medium">{getUserName(update.client_id, update.client_email, update.client_name)}</div>
+                                <div className="text-sm text-muted-foreground">Client</div>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div>
+                              <div className="font-medium">{update.project || 'Unknown Project'}</div>
+                              <div className="text-sm text-muted-foreground">Project</div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center space-x-2">
+                              <Progress value={update.progress || 0} className="w-16" />
+                              <span className="text-sm">{update.progress || 0}%</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={update.current_status === "In Progress" ? "default" : update.current_status === "Review" ? "secondary" : "outline"}>
+                              {update.current_status || 'Unknown'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{update.last_update || 'N/A'}</TableCell>
+                          <TableCell>{update.next_deadline || 'N/A'}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Button variant="ghost" size="icon" onClick={() => {
+                                setProgressData({
+                                  clientId: getUserName(update.client_id, update.client_email, update.client_name),
+                                  projectId: update.project || 'Unknown Project',
+                                  progressPercentage: (update.progress || 0).toString(),
+                                  completedMilestones: update.completed_milestones || "Phase 1, Phase 2",
+                                  currentStatus: update.current_status || 'Unknown',
+                                  nextDeadline: update.next_deadline || '',
+                                  lastUpdate: update.last_update || '',
+                                  notes: update.notes || "",
+                                  attachments: update.attachments || []
+                                });
+                                setSendProgressOpen(true);
+                              }}>
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="icon">
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete Progress Update?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      This action cannot be undone. The progress update for {update.project} will be permanently deleted.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => {
+                                      console.log('Delete progress update:', update.id);
+                                      alert(`Progress update for ${update.project} has been deleted successfully.`);
+                                    }}>Delete</AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -1578,65 +1838,53 @@ const AdminDashboard = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {[
-                          {
-                            id: 1,
-                            clientName: "Hana Kebede",
-                            clientEmail: "hani@example.com",
-                            projectTitle: "E-commerce Website Development",
-                            projectType: "Web Development",
-                            timeline: "3 months",
-                            budget: "50,000 birr",
-                            status: "Pending Review",
-                            dateReceived: "2024-01-15"
-                          },
-                          {
-                            id: 2,
-                            clientName: "John Doe",
-                            clientEmail: "john@example.com",
-                            projectTitle: "Mobile App for Restaurant",
-                            projectType: "Mobile App Development",
-                            timeline: "4 months",
-                            budget: "75,000 birr",
-                            status: "Under Review",
-                            dateReceived: "2024-01-14"
-                          },
-                          {
-                            id: 3,
-                            clientName: "Sarah Johnson",
-                            clientEmail: "sarah@example.com",
-                            projectTitle: "Inventory Management System",
-                            projectType: "Custom Software Solution",
-                            timeline: "6 months",
-                            budget: "120,000 birr",
-                            status: "Approved",
-                            dateReceived: "2024-01-13"
-                          }
-                        ].map((request) => (
+                        {userProjectRequestsLoading ? (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center py-8">
+                              <div className="flex items-center justify-center space-x-2">
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                                <span>Loading project requests...</span>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ) : userProjectRequestsError ? (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center py-8 text-red-500">
+                              {userProjectRequestsError}
+                            </TableCell>
+                          </TableRow>
+                        ) : userProjectRequests.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                              No project requests found
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          userProjectRequests.map((request) => (
                           <TableRow key={request.id}>
                             <TableCell>
                               <div className="flex items-center space-x-3">
                                 <Avatar className="h-8 w-8">
                                   <AvatarImage src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=32&h=32&fit=crop&crop=face" />
-                                  <AvatarFallback>{request.clientName.split(' ').map(n => n[0]).join('')}</AvatarFallback>
+                                  <AvatarFallback>{getUserName(request.user_id, request.user_email, request.client_name).split(' ').map(n => n[0]).join('')}</AvatarFallback>
                                 </Avatar>
                                 <div>
-                                  <div className="font-medium">{request.clientName}</div>
-                                  <div className="text-sm text-muted-foreground">{request.clientEmail}</div>
+                                  <div className="font-medium">{getUserName(request.user_id, request.user_email, request.client_name)}</div>
+                                  <div className="text-sm text-muted-foreground">{getUserEmail(request.user_id, request.client_name, request.client_email)}</div>
                                 </div>
                               </div>
                             </TableCell>
                             <TableCell>
                               <div>
-                                <div className="font-medium">{request.projectTitle}</div>
+                                <div className="font-medium">{request.project_title || 'Untitled Project'}</div>
                                 <div className="text-sm text-muted-foreground">New Request</div>
                               </div>
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline">{request.projectType}</Badge>
+                              <Badge variant="outline">{request.type || 'General'}</Badge>
                             </TableCell>
-                            <TableCell>{request.timeline}</TableCell>
-                            <TableCell>{request.dateReceived}</TableCell>
+                            <TableCell>{request.timeline || 'Not specified'}</TableCell>
+                            <TableCell>{request.date_received || 'Unknown'}</TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
                                 <Button variant="ghost" size="icon" onClick={() => {
@@ -1680,7 +1928,8 @@ const AdminDashboard = () => {
                               </div>
                             </TableCell>
                           </TableRow>
-                        ))}
+                          ))
+                        )}
                       </TableBody>
                     </Table>
                   </CardContent>
@@ -1708,11 +1957,21 @@ const AdminDashboard = () => {
                           <TableRow key={request.id}>
                             <TableCell>
                               <div>
-                                <div className="font-medium">{request.title}</div>
+                                <div className="font-medium">{request.request_title || request.title}</div>
                                 <div className="text-sm text-muted-foreground">{request.description}</div>
                               </div>
                             </TableCell>
-                            <TableCell>{request.client}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center space-x-3">
+                                <Avatar className="h-8 w-8">
+                                  <AvatarFallback>{getUserName(request.user_id, request.user_email, request.client_name).split(' ').map(n => n[0]).join('')}</AvatarFallback>
+                                </Avatar>
+                                <div>
+                                  <div className="font-medium">{getUserName(request.user_id, request.user_email, request.client_name)}</div>
+                                  <div className="text-sm text-muted-foreground">{getUserEmail(request.user_id, request.client_name, request.user_email)}</div>
+                                </div>
+                              </div>
+                            </TableCell>
                             <TableCell>
                               <Badge variant={request.priority === "High" ? "destructive" : request.priority === "Medium" ? "default" : "secondary"}>
                                 {request.priority}
@@ -1723,22 +1982,22 @@ const AdminDashboard = () => {
                                 {request.status}
                               </Badge>
                             </TableCell>
-                            <TableCell>{request.submittedDate}</TableCell>
+                            <TableCell>{request.submitted_date || request.submittedDate}</TableCell>
                             <TableCell>
                               <div className="flex flex-col gap-1">
                                 <div className="flex items-center gap-2">
                                   <div className="flex items-center">
                                     {[1, 2, 3, 4, 5].map((star) => (
-                                      <Star key={star} className={`h-3 w-3 ${star <= request.feedback.rating ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
+                                      <Star key={star} className={`h-3 w-3 ${star <= (request.feedback_rating || request.feedback?.rating || 0) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
                                     ))}
                                   </div>
-                                  <span className="text-xs text-muted-foreground">({request.feedback.rating}/5)</span>
+                                  <span className="text-xs text-muted-foreground">({request.feedback_rating || request.feedback?.rating || 0}/5)</span>
                                 </div>
-                                <Badge variant={request.feedback.rating >= 4 ? "default" : request.feedback.rating >= 3 ? "secondary" : "destructive"} className="text-xs">
-                                  {request.feedback.satisfaction}
+                                <Badge variant={(request.feedback_rating || request.feedback?.rating || 0) >= 4 ? "default" : (request.feedback_rating || request.feedback?.rating || 0) >= 3 ? "secondary" : "destructive"} className="text-xs">
+                                  {request.satisfaction_level || request.feedback?.satisfaction || 'N/A'}
                                     </Badge>
-                                <div className="text-xs text-muted-foreground max-w-[150px] truncate" title={request.feedback.comment}>
-                                  "{request.feedback.comment}"
+                                <div className="text-xs text-muted-foreground max-w-[150px] truncate" title={request.feedback_comment || request.feedback?.comment}>
+                                  "{request.feedback_comment || request.feedback?.comment || 'No comment'}"
                                     </div>
                               </div>
                             </TableCell>
@@ -1794,9 +2053,14 @@ const AdminDashboard = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Notifications</DialogTitle>
+            <DialogDescription>
+              View and manage your notifications
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 max-h-60 overflow-y-auto">
-            {notifications.length === 0 ? (
+            {notificationsLoading ? (
+              <p className="text-muted-foreground">Loading notifications...</p>
+            ) : notifications.length === 0 ? (
               <p className="text-muted-foreground">No notifications.</p>
             ) : notifications.map((notification) => (
               <div key={notification.id} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
@@ -1805,8 +2069,9 @@ const AdminDashboard = () => {
                   notification.type === "warning" ? "bg-yellow-500" : "bg-blue-500"
                 }`} />
                 <div className="flex-1">
+                  <p className="text-sm font-medium">{notification.title}</p>
                   <p className="text-sm">{notification.message}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{notification.time}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{new Date(notification.createdAt).toLocaleString()}</p>
                     </div>
                     </div>
             ))}
@@ -1822,6 +2087,9 @@ const AdminDashboard = () => {
               <Plus className="h-5 w-5" />
               Add New Team
             </DialogTitle>
+            <DialogDescription>
+              Add a new team member to your organization with their details and role.
+            </DialogDescription>
           </DialogHeader>
           <TooltipProvider>
             <form className="space-y-6" onSubmit={handleCreateUser}>
@@ -2046,6 +2314,9 @@ const AdminDashboard = () => {
               <Plus className="h-5 w-5" />
               Add New User
             </DialogTitle>
+            <DialogDescription>
+              Add a new user to the system with their details and permissions.
+            </DialogDescription>
           </DialogHeader>
           <TooltipProvider>
             <form className="space-y-6" onSubmit={handleCreateUserForUsersTab}>
@@ -2306,6 +2577,11 @@ const AdminDashboard = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{userAction.type === 'view' ? 'View User' : userAction.type === 'edit' ? 'Edit User' : 'Delete User'}</DialogTitle>
+            <DialogDescription>
+              {userAction.type === 'view' ? 'View user details and information' : 
+               userAction.type === 'edit' ? 'Edit user information and settings' : 
+               'Delete user from the system'}
+            </DialogDescription>
           </DialogHeader>
           {userAction.type === 'view' && userAction.user && (
             <div>
@@ -2339,6 +2615,9 @@ const AdminDashboard = () => {
               <Plus className="h-5 w-5" />
               Add New Project
             </DialogTitle>
+            <DialogDescription>
+              Create a new project with details, timeline, and team assignments.
+            </DialogDescription>
           </DialogHeader>
           <TooltipProvider>
             <form className="space-y-6" onSubmit={handleProjectSubmit}>
@@ -2688,7 +2967,7 @@ const AdminDashboard = () => {
           {projectAction.type === 'view' && projectAction.project && (
             <div>
               <p><b>Name:</b> {projectAction.project.name}</p>
-              <p><b>Client:</b> {projectAction.project.client}</p>
+              <p><b>Client:</b> {getUserName(projectAction.project.clientId, projectAction.project.clientEmail, projectAction.project.clientName || projectAction.project.client)}</p>
               <p><b>Status:</b> {projectAction.project.status}</p>
               <p><b>Deadline:</b> {projectAction.project.deadline}</p>
               <p><b>Budget:</b> {projectAction.project.budget}</p>
@@ -2698,7 +2977,7 @@ const AdminDashboard = () => {
           {projectAction.type === 'edit' && projectAction.project && (
             <form className="space-y-2">
               <Input defaultValue={projectAction.project.name} />
-              <Input defaultValue={projectAction.project.client} />
+              <Input defaultValue={projectAction.project.clientName || projectAction.project.client || ''} />
               <Input defaultValue={projectAction.project.deadline} type="date" />
               <Input defaultValue={projectAction.project.budget} />
               <DialogFooter>
@@ -2730,7 +3009,9 @@ const AdminDashboard = () => {
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold text-center">Edit Service Request</DialogTitle>
-            <p className="text-muted-foreground text-center">Update service request details and feedback</p>
+            <DialogDescription className="text-center">
+              Update service request details and feedback
+            </DialogDescription>
           </DialogHeader>
           {requestAction.type === 'edit' && requestAction.request && (
             <form onSubmit={(e) => {
@@ -2932,27 +3213,76 @@ const AdminDashboard = () => {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold text-center">Send New Message</DialogTitle>
-            <p className="text-muted-foreground text-center">Send a message to clients or team members</p>
+            <DialogDescription className="text-center">
+              Send a message to clients or team members
+            </DialogDescription>
           </DialogHeader>
-          <form onSubmit={(e) => {
+          <form onSubmit={async (e) => {
             e.preventDefault();
-            console.log('New message sent');
-            setMessagesOpen(false);
-            alert('Message sent successfully!');
+            try {
+              // Validate required fields
+              if (!messageData.recipient || !messageData.subject || !messageData.content) {
+                alert("Please fill in all required fields (Recipient, Subject, Content)");
+                return;
+              }
+
+              const { apiClient } = await import("@/lib/api");
+              const response = await apiClient.post('/admin/messages', {
+                recipient_name: messageData.recipient,
+                subject: messageData.subject,
+                content: messageData.content,
+                sender_id: 2 // Always use 2 for admin
+              });
+              console.log('New message sent', response);
+              setMessageData({
+                recipient: "",
+                subject: "",
+                content: ""
+              });
+              setMessagesOpen(false);
+              
+              // Refresh messages list
+              import("@/lib/api").then(({ apiClient }) => {
+                apiClient.get('/admin/messages').then(res => {
+                  if (Array.isArray(res)) {
+                    setMessages(res || []);
+                  }
+                }).catch(() => {
+                  console.error('Failed to refresh messages');
+                });
+              });
+              
+              alert('Message sent successfully!');
+            } catch (error) {
+              console.error('Error sending message:', error);
+              alert("Failed to send message. Please try again.");
+            }
           }} className="space-y-6">
             <div className="space-y-4">
               <div>
                 <Label htmlFor="recipient">Recipient *</Label>
-                <Select required>
+                <Select required value={messageData.recipient} onValueChange={(value) => setMessageData(prev => ({ ...prev, recipient: value }))}>
                   <SelectTrigger className="h-11 border-blue-500/20 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all duration-200">
                     <SelectValue placeholder="Select recipient" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="hana@example.com">Hana Kebede (hani@example.com)</SelectItem>
-                    <SelectItem value="john@example.com">John Doe (john@example.com)</SelectItem>
-                    <SelectItem value="sarah@example.com">Sarah Johnson (sarah@example.com)</SelectItem>
-                    <SelectItem value="all-clients">All Clients</SelectItem>
-                    <SelectItem value="all-team">All Team Members</SelectItem>
+                    {usersLoading ? (
+                      <SelectItem disabled value="loading">Loading users...</SelectItem>
+                    ) : usersError ? (
+                      <SelectItem disabled value="error">{usersError}</SelectItem>
+                    ) : users && users.length > 0 ? (
+                      users
+                        .filter(user =>
+                          user.email !== "admin@hawi.com" &&
+                          user.email !== "admin@hawisoftware.com" &&
+                          user.role?.toLowerCase() !== "admin"
+                        )
+                        .map(user => (
+                          <SelectItem key={user.id} value={user.name}>{user.name} ({user.email})</SelectItem>
+                        ))
+                    ) : (
+                      <SelectItem disabled value="no-users">No users available</SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -2961,6 +3291,8 @@ const AdminDashboard = () => {
                 <Input
                   id="subject"
                   placeholder="Enter message subject"
+                  value={messageData.subject}
+                  onChange={(e) => setMessageData(prev => ({ ...prev, subject: e.target.value }))}
                   required
                   className="h-11 border-blue-500/20 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all duration-200"
                 />
@@ -2971,6 +3303,8 @@ const AdminDashboard = () => {
                 <Textarea
                   id="message"
                   placeholder="Type your message here..."
+                  value={messageData.content}
+                  onChange={(e) => setMessageData(prev => ({ ...prev, content: e.target.value }))}
                   required
                   className="min-h-[150px] border-blue-500/20 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all duration-200"
                 />
@@ -2997,47 +3331,42 @@ const AdminDashboard = () => {
               <Plus className="h-5 w-5" />
               Add New Blog Post
             </DialogTitle>
+            <DialogDescription>
+              Create a new blog post with content, category, and publishing options.
+            </DialogDescription>
           </DialogHeader>
           {/* Blog Post Form State */}
           {(() => {
-            const [title, setTitle] = useState("");
-            const [author, setAuthor] = useState("");
-            const [date, setDate] = useState("");
-            const [status, setStatus] = useState("");
-            const [category, setCategory] = useState("");
-            const [image, setImage] = useState("");
-            const [content, setContent] = useState("");
-            const [submitting, setSubmitting] = useState(false);
             const handleSubmit = async (e: React.FormEvent) => {
               e.preventDefault();
-              setSubmitting(true);
+              setBlogSubmitting(true);
               // Auto-generate excerpt and tags
-              const excerpt = content ? content.substring(0, 120) + (content.length > 120 ? '...' : '') : '';
+              const excerpt = blogContent ? blogContent.substring(0, 120) + (blogContent.length > 120 ? '...' : '') : '';
               const tags = [];
               const featured = false;
               const payload: any = {
-                title,
-                content,
-                category,
-                author,
-                status,
-                publish_date: date || null,
+                title: blogTitle,
+                content: blogContent,
+                category: blogCategory,
+                author: blogAuthor,
+                status: blogStatus,
+                publish_date: blogDate || null,
                 image_url: "", // will be set in handleCreateBlogPost if image is uploaded
-                coverImage: (typeof File !== 'undefined' && image != null && ((image as any) instanceof File)) ? image : undefined,
-                excerpt: content ? content.substring(0, 120) + (content.length > 120 ? '...' : '') : '',
+                coverImage: (typeof File !== 'undefined' && blogImage != null && ((blogImage as any) instanceof File)) ? blogImage : undefined,
+                excerpt: blogContent ? blogContent.substring(0, 120) + (blogContent.length > 120 ? '...' : '') : '',
                 tags: [],
                 featured: false,
-                published: status === "published",
+                published: blogStatus === "published",
               };
               await handleCreateBlogPost(payload);
-              setTitle("");
-              setAuthor("");
-              setDate("");
-              setStatus("");
-              setCategory("");
-              setImage("");
-              setContent("");
-              setSubmitting(false);
+              setBlogTitle("");
+              setBlogAuthor("");
+              setBlogDate("");
+              setBlogStatus("");
+              setBlogCategory("");
+              setBlogImage("");
+              setBlogContent("");
+              setBlogSubmitting(false);
               setAddPostOpen(false);
             };
             return (
@@ -3051,8 +3380,8 @@ const AdminDashboard = () => {
                         placeholder="Enter post title" 
                         className="h-11 border-blue-500/20 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all duration-200"
                         required 
-                        value={title}
-                        onChange={e => setTitle(e.target.value)}
+                        value={blogTitle}
+                        onChange={e => setBlogTitle(e.target.value)}
                       />
                     </div>
                     <div className="space-y-2">
@@ -3060,8 +3389,8 @@ const AdminDashboard = () => {
                       <Input 
                         placeholder="Enter author name" 
                         className="h-11 border-blue-500/20 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all duration-200"
-                        value={author}
-                        onChange={e => setAuthor(e.target.value)}
+                        value={blogAuthor}
+                        onChange={e => setBlogAuthor(e.target.value)}
                       />
                     </div>
                     <div className="space-y-2">
@@ -3069,21 +3398,20 @@ const AdminDashboard = () => {
                       <Input 
                         type="date"
                         className="h-11 border-blue-500/20 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all duration-200"
-                        value={date}
-                        onChange={e => setDate(e.target.value)}
+                        value={blogDate}
+                        onChange={e => setBlogDate(e.target.value)}
                       />
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-foreground">Status</label>
-                      <Select value={status} onValueChange={setStatus}>
+                      <Select value={blogStatus} onValueChange={setBlogStatus}>
                         <SelectTrigger className="h-11 border-blue-500/20 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all duration-200">
                           <SelectValue placeholder="Select status" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="draft">Draft</SelectItem>
-                          <SelectItem value="published">Published</SelectItem>
-                          <SelectItem value="review">Under Review</SelectItem>
-                          <SelectItem value="archived">Archived</SelectItem>
+                          <SelectItem value="Draft">Draft</SelectItem>
+                          <SelectItem value="Published">Published</SelectItem>
+                          <SelectItem value="Review">Under Review</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -3092,8 +3420,8 @@ const AdminDashboard = () => {
                       <Input 
                         placeholder="e.g., Web Development, Mobile Apps, Software Architecture" 
                         className="h-11 border-blue-500/20 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all duration-200"
-                        value={category}
-                        onChange={e => setCategory(e.target.value)}
+                        value={blogCategory}
+                        onChange={e => setBlogCategory(e.target.value)}
                       />
                     </div>
                     <div className="space-y-2 lg:col-span-2">
@@ -3102,8 +3430,8 @@ const AdminDashboard = () => {
                         placeholder="https://example.com/image.jpg" 
                         className="h-11 border-blue-500/20 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all duration-200"
                         type="url"
-                        value={image}
-                        onChange={e => setImage(e.target.value)}
+                        value={blogImage}
+                        onChange={e => setBlogImage(e.target.value)}
                       />
                     </div>
                     <div className="space-y-2 lg:col-span-2">
@@ -3111,8 +3439,8 @@ const AdminDashboard = () => {
                       <Textarea 
                         placeholder="Write your blog post content here... You can include markdown formatting, links, and rich text content." 
                         className="min-h-48 border-blue-500/20 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all duration-200 resize-none"
-                        value={content}
-                        onChange={e => setContent(e.target.value)}
+                        value={blogContent}
+                        onChange={e => setBlogContent(e.target.value)}
                       />
                     </div>
                   </div>
@@ -3122,8 +3450,8 @@ const AdminDashboard = () => {
                   <Button variant="outline" onClick={() => setAddPostOpen(false)} className="px-6" type="button">
                     Cancel
                   </Button>
-                  <Button type="submit" className="px-6 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white" disabled={submitting}>
-                    {submitting ? "Adding..." : "Add Post"}
+                  <Button type="submit" className="px-6 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white" disabled={blogSubmitting}>
+                    {blogSubmitting ? "Adding..." : "Add Post"}
                   </Button>
                 </DialogFooter>
               </form>
@@ -3182,7 +3510,20 @@ const AdminDashboard = () => {
               const file = e.target.files && e.target.files[0];
               if (file) {
                 const reader = new FileReader();
-                reader.onload = ev => setAdminProfilePic(ev.target.result as string);
+                reader.onload = ev => {
+                  const newProfilePic = ev.target?.result as string;
+                  setAdminProfilePic(newProfilePic);
+                  // Update user context and localStorage
+                  if (setUser && user) {
+                    const updated = { ...user, profilePic: newProfilePic };
+                    setUser(updated);
+                    try { 
+                      localStorage.setItem('authUser', JSON.stringify(updated)); 
+                    } catch (error) {
+                      console.error('Failed to save profile picture to localStorage:', error);
+                    }
+                  }
+                };
                 reader.readAsDataURL(file);
               }
             }} />
@@ -3202,11 +3543,45 @@ const AdminDashboard = () => {
           <DialogHeader>
             <DialogTitle>Edit Admin Profile</DialogTitle>
           </DialogHeader>
-                     <form className="space-y-6" onSubmit={e => { 
+                     <form className="space-y-6" onSubmit={async e => { 
              e.preventDefault(); 
-             // Handle admin profile update
-             console.log('Admin profile updated:', adminProfileData);
-             setAdminProfileEdit(false); 
+             try {
+               // Handle admin profile update
+               const formData = new FormData();
+               formData.append('name', adminProfileData.name);
+               formData.append('email', adminProfileData.email);
+               formData.append('role', adminProfileData.role);
+               
+               // Add profile picture if changed
+               const profilePicInput = document.getElementById('admin-profile-edit-pic-input') as HTMLInputElement;
+               if (profilePicInput?.files?.[0]) {
+                 formData.append('profile_picture', profilePicInput.files[0]);
+               }
+               
+               const response = await fetch('http://localhost:8000/api/profile', {
+                 method: 'POST',
+                 headers: {
+                   'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+                 },
+                 body: formData,
+               });
+               
+               if (response.ok) {
+                 const result = await response.json();
+                 console.log('Admin profile updated:', result);
+                 setAdminProfileEdit(false);
+                 // Update user context and persist
+                 if (setUser) {
+                   const updated: any = { ...user, ...result.data };
+                   try { localStorage.setItem('authUser', JSON.stringify(updated)); } catch {}
+                   setUser(updated);
+                 }
+               } else {
+                 console.error('Failed to update profile');
+               }
+             } catch (error) {
+               console.error('Error updating profile:', error);
+             }
            }}>
              {/* Profile Picture Section */}
              <div className="flex flex-col items-center gap-4 p-6 bg-gradient-to-r from-blue-500/5 to-purple-500/5 rounded-xl border border-dashed border-blue-500/20">
@@ -3218,7 +3593,20 @@ const AdminDashboard = () => {
                  const file = e.target.files && e.target.files[0];
                  if (file) {
                    const reader = new FileReader();
-                   reader.onload = ev => setAdminProfilePic(ev.target.result as string);
+                   reader.onload = ev => {
+                     const newProfilePic = ev.target?.result as string;
+                     setAdminProfilePic(newProfilePic);
+                     // Update user context and localStorage
+                     if (setUser && user) {
+                       const updated = { ...user, profilePic: newProfilePic };
+                       setUser(updated);
+                       try { 
+                         localStorage.setItem('authUser', JSON.stringify(updated)); 
+                       } catch (error) {
+                         console.error('Failed to save profile picture to localStorage:', error);
+                       }
+                     }
+                   };
                    reader.readAsDataURL(file);
                  }
                }} />
@@ -3287,6 +3675,9 @@ const AdminDashboard = () => {
               <Eye className="h-5 w-5" />
               Team Member Profile
             </DialogTitle>
+            <DialogDescription>
+              View team member details, performance, and project assignments.
+            </DialogDescription>
           </DialogHeader>
           {currentTeamMember && (
             <div className="space-y-6">
@@ -3365,6 +3756,9 @@ const AdminDashboard = () => {
               <Edit className="h-5 w-5" />
               Edit Team Member
             </DialogTitle>
+            <DialogDescription>
+              Update team member information, role, and project assignments.
+            </DialogDescription>
           </DialogHeader>
           {currentTeamMember && (
             <form className="space-y-6" onSubmit={e => {
@@ -3524,24 +3918,64 @@ const AdminDashboard = () => {
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Send Project Progress Update</DialogTitle>
-            <p className="text-sm text-muted-foreground">Update your client on the current project progress and milestones</p>
+            <DialogDescription>
+              Update your client on the current project progress and milestones
+            </DialogDescription>
           </DialogHeader>
-          <form onSubmit={(e) => {
+          <form onSubmit={async (e) => {
             e.preventDefault();
-            console.log('Progress update sent:', progressData);
-            setProgressData({
-              clientId: "",
-              projectId: "",
-              progressPercentage: "",
-              completedMilestones: "",
-              currentStatus: "",
-              nextDeadline: "",
-              lastUpdate: "2024-01-15",
-              notes: "",
-              attachments: []
-            });
-            setSendProgressOpen(false);
-            alert("Progress update sent successfully!");
+            try {
+              // Validate required fields
+              if (!progressData.projectId || !progressData.clientId || !progressData.progressPercentage || !progressData.currentStatus) {
+                alert("Please fill in all required fields (Project, Client, Progress %, Current Status)");
+                return;
+              }
+
+              const { apiClient } = await import("@/lib/api");
+              // Find the selected project and client
+              const selectedProject = projects.find(p => String(p.id) === progressData.projectId);
+              const selectedClient = users.find(u => u.name === progressData.clientId);
+              
+              if (!selectedProject) {
+                alert("Please select a valid project");
+                return;
+              }
+              
+              if (!selectedClient) {
+                alert("Please select a valid client");
+                return;
+              }
+              
+              const response = await apiClient.post('/progress-updates', {
+                project: selectedProject.project_title || selectedProject.title || selectedProject.name || progressData.projectId,
+                client_name: progressData.clientId,
+                progress: parseInt(progressData.progressPercentage),
+                current_status: progressData.currentStatus,
+                completed_milestones: progressData.completedMilestones,
+                next_deadline: progressData.nextDeadline,
+                last_update: progressData.lastUpdate,
+                notes: progressData.notes
+              });
+              console.log('Progress update sent:', response);
+              setProgressData({
+                clientId: "",
+                projectId: "",
+                progressPercentage: "",
+                completedMilestones: "",
+                currentStatus: "",
+                nextDeadline: "",
+                lastUpdate: "2024-01-15",
+                notes: "",
+                attachments: []
+              });
+              setSendProgressOpen(false);
+              alert("Progress update sent successfully!");
+              // Refresh progress updates list
+              refreshProgressUpdates();
+            } catch (error) {
+              console.error('Error sending progress update:', error);
+              alert("Failed to send progress update. Please try again.");
+            }
           }} className="space-y-6">
             
             {/* Project Information */}
@@ -3555,9 +3989,23 @@ const AdminDashboard = () => {
                       <SelectValue placeholder="Select client" />
                     </SelectTrigger>
                     <SelectContent>
-                      {clients.map(client => (
-                        <SelectItem key={client.id} value={client.name}>{client.name} - {client.company}</SelectItem>
-                      ))}
+                      {usersLoading ? (
+                        <SelectItem disabled value="loading">Loading users...</SelectItem>
+                      ) : usersError ? (
+                        <SelectItem disabled value="error">{usersError}</SelectItem>
+                      ) : users && users.length > 0 ? (
+                        users
+                          .filter(user =>
+                            user.email !== "admin@hawi.com" &&
+                            user.email !== "admin@hawisoftware.com" &&
+                            user.role?.toLowerCase() !== "admin"
+                          )
+                          .map(user => (
+                            <SelectItem key={user.id} value={user.name}>{user.name} ({user.email})</SelectItem>
+                          ))
+                      ) : (
+                        <SelectItem disabled value="no-users">No users available</SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -3568,9 +4016,17 @@ const AdminDashboard = () => {
                       <SelectValue placeholder="Select project" />
                     </SelectTrigger>
                     <SelectContent>
-                      {projects.map(project => (
-                        <SelectItem key={String(project.id)} value={String(project.id)}>{project.title || project.name}</SelectItem>
-                      ))}
+                      {projectsLoading ? (
+                        <SelectItem disabled value="loading">Loading projects...</SelectItem>
+                      ) : projectsError ? (
+                        <SelectItem disabled value="error">{projectsError}</SelectItem>
+                      ) : projects && projects.length > 0 ? (
+                        projects.map(project => (
+                          <SelectItem key={String(project.id)} value={String(project.id)}>{project.project_title || project.title || project.name}</SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem disabled value="no-projects">No projects available</SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -3674,7 +4130,9 @@ const AdminDashboard = () => {
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>New Project Request Details</DialogTitle>
-            <p className="text-sm text-muted-foreground">Review and manage incoming project request from client</p>
+            <DialogDescription>
+              Review and manage incoming project request from client
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={(e) => {
             e.preventDefault();
@@ -3855,6 +4313,9 @@ const AdminDashboard = () => {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Send Response Message</DialogTitle>
+            <DialogDescription>
+              Send a response message to the client or team member.
+            </DialogDescription>
           </DialogHeader>
           
           <div className="space-y-4">
@@ -3896,10 +4357,44 @@ const AdminDashboard = () => {
             </Button>
             <Button 
               className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700" 
-              onClick={() => {
-                console.log('Send response message:', responseMessageData);
-                setResponseMessageOpen(false);
-                setResponseMessageData({ to: "", subject: "", message: "" });
+              onClick={async () => {
+                try {
+                  const response = await fetch('http://localhost:8000/api/usermessages', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+                    },
+                    body: JSON.stringify({
+                      subject: responseMessageData.subject,
+                      message: responseMessageData.message,
+                      recipient: responseMessageData.to,
+                      priority: 'Normal'
+                    }),
+                  });
+
+                  if (response.ok) {
+                    console.log('Response message sent successfully');
+                    alert('Response sent successfully!');
+                    setResponseMessageOpen(false);
+                    setResponseMessageData({ to: "", subject: "", message: "" });
+                    
+                    // Refresh messages
+                    import("@/lib/api").then(({ apiClient }) => {
+                      apiClient.get('/usermessages').then((res: any) => {
+                        setMessages(Array.isArray(res) ? res : []);
+                      }).catch(() => {
+                        console.error('Failed to refresh messages');
+                      });
+                    });
+                  } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    alert(`Failed to send response: ${errorData.message || 'Please try again.'}`);
+                  }
+                } catch (error) {
+                  console.error('Error sending response:', error);
+                  alert('Error sending response. Please try again.');
+                }
               }}
             >
               <Send className="h-4 w-4 mr-2" />
@@ -3917,6 +4412,11 @@ const AdminDashboard = () => {
               {requestAction.type === 'view' ? 'View Service Request Details' : 
                requestAction.type === 'edit' ? 'Edit Service Request' : 'Delete Service Request'}
             </DialogTitle>
+            <DialogDescription>
+              {requestAction.type === 'view' ? 'View service request details and status' : 
+               requestAction.type === 'edit' ? 'Edit service request information and feedback' : 
+               'Delete service request from the system'}
+            </DialogDescription>
           </DialogHeader>
           
           {requestAction.type === 'view' && requestAction.request && (
@@ -4096,14 +4596,19 @@ const AdminDashboard = () => {
               {messageAction.type === 'view' ? 'View Message Details' : 
                messageAction.type === 'edit' ? 'Edit Message' : 'Delete Message'}
             </DialogTitle>
+            <DialogDescription>
+              {messageAction.type === 'view' ? 'View message details and content' : 
+               messageAction.type === 'edit' ? 'Edit message content and settings' : 
+               'Delete message from the system'}
+            </DialogDescription>
           </DialogHeader>
           
           {messageAction.type === 'view' && messageAction.message && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label className="text-sm font-medium text-muted-foreground">From</Label>
-                  <p className="text-sm">{messageAction.message.from}</p>
+                  <Label className="text-sm font-medium text-muted-foreground">To</Label>
+                  <p className="text-sm">{messageAction.message.to || 'Admin'}</p>
                 </div>
                 <div>
                   <Label className="text-sm font-medium text-muted-foreground">Email</Label>

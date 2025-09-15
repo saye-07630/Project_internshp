@@ -15,15 +15,45 @@ class UserServiceRequestController extends Controller
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'priority' => 'required|in:low,medium,high',
-            'status' => 'nullable|string'
-        ]);
-        $validated['user_id'] = Auth::id();
-        $userserviceRequest = UserServiceRequest::create($validated);
-        return response()->json($userserviceRequest, 201);
+        try {
+            \Log::info('UserServiceRequest store method called', [
+                'request_data' => $request->all(),
+                'auth_user' => Auth::id(),
+                'headers' => $request->headers->all()
+            ]);
+
+            $validated = $request->validate([
+                'title' => 'required|string|max:255',
+                'description' => 'nullable|string',
+                'priority' => 'required|string',
+                'category' => 'nullable|string',
+                'projectRelated' => 'nullable|string',
+                'urgency' => 'nullable|string',
+                'expectedResolution' => 'nullable|string',
+                'additionalNotes' => 'nullable|string',
+                'feedback' => 'nullable|array'
+            ]);
+            $validated['user_id'] = Auth::id();
+            $validated['status'] = 'Pending';
+            $userserviceRequest = UserServiceRequest::create($validated);
+            
+            \Log::info('UserServiceRequest created successfully', ['request_id' => $userserviceRequest->id]);
+            
+            return response()->json([
+                'message' => 'Service request submitted successfully',
+                'data' => $userserviceRequest
+            ], 201);
+        } catch (\Exception $e) {
+            \Log::error('UserServiceRequest store error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to submit service request',
+                'message' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function show(UserServiceRequest $userserviceRequest)

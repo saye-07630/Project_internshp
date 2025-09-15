@@ -22,6 +22,7 @@ class AdminUserSeeder extends Seeder
                 'email' => 'admin@hawi.com',
                 'password' => Hash::make('12345678'),
                 'role' => 'admin',
+                'profile_picture' => 'admin-profile.jpg',
                 'created_at' => now(),
                 'updated_at' => now(),
             ]

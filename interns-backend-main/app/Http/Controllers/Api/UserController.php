@@ -10,8 +10,9 @@ class UserController extends Controller
 {
     public function index(Request $request)
     {
-        // Return the authenticated user or a test response
-        return response()->json(Auth::user() ?? ['message' => 'No user authenticated'], 200);
+        // Return all users for admin dashboard
+        $users = \App\Models\User::all();
+        return response()->json($users, 200);
     }
 
     public function show($id)

@@ -64,6 +64,40 @@ class ApiClient {
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        
+        // Handle specific error cases
+        if (response.status === 401) {
+          // Unauthorized - clear token and redirect to login
+          localStorage.removeItem('authToken');
+          window.location.href = '/login';
+          throw new ApiError(
+            response.status,
+            'Authentication required. Please log in again.',
+            errorData
+          );
+        } else if (response.status === 403) {
+          // Forbidden - user doesn't have permission
+          throw new ApiError(
+            response.status,
+            'Access denied. You do not have permission to access this resource.',
+            errorData
+          );
+        } else if (response.status === 404) {
+          // Not found
+          throw new ApiError(
+            response.status,
+            'Resource not found.',
+            errorData
+          );
+        } else if (response.status >= 500) {
+          // Server error
+          throw new ApiError(
+            response.status,
+            'Server error. Please try again later.',
+            errorData
+          );
+        }
+        
         throw new ApiError(
           response.status,
           errorData.message || `HTTP error! status: ${response.status}`,
@@ -77,7 +111,7 @@ class ApiClient {
       if (error instanceof ApiError) {
         throw error;
       }
-      throw new ApiError(0, 'Network error', error);
+      throw new ApiError(0, 'Network error. Please check your connection.', error);
     }
   }
 
@@ -198,8 +232,8 @@ export const endpoints = {
   
   // Users
   users: {
-    profile: '/user',
-    updateProfile: '/user',
+    profile: '/profile',
+    updateProfile: '/profile',
     changePassword: '/users/change-password',
     uploadAvatar: '/users/avatar',
   },
@@ -236,12 +270,12 @@ export const endpoints = {
   // Blog
   blog: {
     list: '/blog',
-    create: '/blogs',
-    get: (id: string) => `/blogs/${id}`,
-    update: (id: string) => `/blogs/${id}`,
-    delete: (id: string) => `/blogs/${id}`,
-    like: (id: string) => `/blogs/${id}/increment-likes`,
-    view: (id: string) => `/blogs/${id}/increment-views`,
+    create: '/blog',
+    get: (id: string) => `/blog/${id}`,
+    update: (id: string) => `/blog/${id}`,
+    delete: (id: string) => `/blog/${id}`,
+    like: (id: string) => `/blog/${id}/increment-likes`,
+    view: (id: string) => `/blog/${id}/increment-views`,
   },
   
   // Admin
@@ -259,6 +293,15 @@ export const endpoints = {
     analytics: '/overview',
     team: '/team-members',
     teamMember: (id: string) => `/team-members/${id}`,
+  },
+  
+  // Notifications
+  notifications: {
+    list: '/notifications',
+    create: '/notifications',
+    markRead: (id: string) => `/notifications/${id}/read`,
+    markAllRead: '/notifications/read-all',
+    unreadCount: '/notifications/unread-count',
   },
   
   // Contact

@@ -92,8 +92,12 @@ export interface RegisterData {
   name: string;
   email: string;
   password: string;
+  password_confirmation?: string;
   company?: string;
   phone?: string;
+  role?: string;
+  department?: string;
+  status?: string;
 }
 
 export interface UpdateProfileData {
@@ -121,7 +125,7 @@ export interface CreateServiceRequestData {
 export interface CreateMessageData {
   subject: string;
   content: string;
-  toId: string;
+  recipient_name: string;
   attachments?: File[];
 }
 
@@ -134,6 +138,26 @@ export interface CreateBlogPostData {
   featured: boolean;
   published: boolean;
   coverImage?: File;
+}
+
+export interface Notification {
+  id: string;
+  userId: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  title: string;
+  message: string;
+  isRead: boolean;
+  data?: any;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateNotificationData {
+  userId: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  title: string;
+  message: string;
+  data?: any;
 }
 
 // Helper function to handle Laravel responses
@@ -419,13 +443,29 @@ export const serviceRequestService = {
   }): Promise<PaginatedResponse<ServiceRequest>> => {
     try {
       const response = await apiClient.get(endpoints.serviceRequests.list, params);
-      const respAny = response as any;
-      const data = respAny && respAny.data ? respAny.data : respAny;
-      const meta = respAny && respAny.meta ? respAny.meta : (data && data.meta ? data.meta : undefined);
+      const raw = (response as any);
+      const array = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.data) ? raw.data : []);
+      // Normalize backend fields to frontend ServiceRequest shape
+      const normalized: ServiceRequest[] = array.map((item: any) => ({
+        id: String(item.id ?? item.request_id ?? crypto.randomUUID?.() ?? Math.random()),
+        title: item.title ?? item.subject ?? 'Untitled',
+        description: item.description ?? item.details ?? '',
+        type: (item.type ?? item.category ?? 'support') as any,
+        priority: (item.priority ?? 'low') as any,
+        status: (item.status ?? 'open') as any,
+        clientId: String(item.user_id ?? item.clientId ?? ''),
+        clientName: item.clientName ?? item.user_name ?? '',
+        createdAt: item.created_at ?? item.createdAt ?? new Date().toISOString(),
+        updatedAt: item.updated_at ?? item.updatedAt ?? new Date().toISOString(),
+        assignedTo: item.assigned_to ?? undefined,
+        feedback: item.feedback ?? undefined,
+        rating: item.rating ?? undefined,
+      }));
+      const meta = (raw && raw.meta) ? raw.meta : { page: 1, limit: normalized.length || 10, total: normalized.length, totalPages: 1 };
       return {
         success: true,
-        data: handleLaravelResponse<ServiceRequest[]>(response),
-        pagination: meta || { page: 1, limit: 10, total: 0, totalPages: 1 }
+        data: normalized,
+        pagination: meta
       };
     } catch (error: any) {
       return {
@@ -535,13 +575,28 @@ export const messageService = {
   }): Promise<PaginatedResponse<Message>> => {
     try {
       const response = await apiClient.get(endpoints.messages.list, params);
-      const respAny = response as any;
-      const data = respAny && respAny.data ? respAny.data : respAny;
-      const meta = respAny && respAny.meta ? respAny.meta : (data && data.meta ? data.meta : undefined);
+      const raw = (response as any);
+      const array = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.data) ? raw.data : []);
+      const normalized: Message[] = array.map((m: any) => ({
+        id: String(m.id),
+        subject: m.subject ?? 'No Subject',
+        content: m.content ?? m.message ?? '',
+        fromId: String(m.fromId ?? m.sender_id ?? ''),
+        fromName: m.from ?? m.sender?.name ?? '',
+        toId: String(m.toId ?? m.receiver_id ?? ''),
+        toName: m.to ?? m.receiver?.name ?? '',
+        isRead: Boolean(m.isRead ?? m.read ?? m.is_read ?? false),
+        // Backward compatibility for components using 'read'
+        // @ts-ignore
+        read: Boolean(m.isRead ?? m.read ?? m.is_read ?? false),
+        createdAt: m.createdAt ?? m.timestamp ?? m.created_at ?? new Date().toISOString(),
+        attachments: m.attachments ?? [],
+      }));
+      const meta = (raw && raw.meta) ? raw.meta : { page: 1, limit: normalized.length || 10, total: normalized.length, totalPages: 1 };
       return {
         success: true,
-        data: handleLaravelResponse<Message[]>(response),
-        pagination: meta || { page: 1, limit: 10, total: 0, totalPages: 1 }
+        data: normalized,
+        pagination: meta
       };
     } catch (error: any) {
       return {
@@ -556,10 +611,22 @@ export const messageService = {
   getMessage: async (id: string): Promise<ApiResponse<Message>> => {
     try {
       const response = await apiClient.get(endpoints.messages.get(id));
-      return {
-        success: true,
-        data: handleLaravelResponse<Message>(response)
+      const m = (response as any);
+      const normalized: Message = {
+        id: String(m.id),
+        subject: m.subject ?? 'No Subject',
+        content: m.content ?? m.message ?? '',
+        fromId: String(m.fromId ?? m.sender_id ?? ''),
+        fromName: m.from ?? m.sender?.name ?? '',
+        toId: String(m.toId ?? m.receiver_id ?? ''),
+        toName: m.to ?? m.receiver?.name ?? '',
+        isRead: Boolean(m.isRead ?? m.read ?? m.is_read ?? false),
+        // @ts-ignore
+        read: Boolean(m.isRead ?? m.read ?? m.is_read ?? false),
+        createdAt: m.createdAt ?? m.timestamp ?? m.created_at ?? new Date().toISOString(),
+        attachments: m.attachments ?? [],
       };
+      return { success: true, data: normalized };
     } catch (error: any) {
       return {
         success: false,
@@ -620,15 +687,45 @@ export const blogService = {
     featured?: boolean;
     published?: boolean;
     search?: string;
+    includeAll?: boolean; // New parameter to include all posts (for admin)
   }): Promise<PaginatedResponse<BlogPost>> => {
     try {
       const response = await apiClient.get(endpoints.blog.list, params);
       const respAny = response as any;
-      const data = respAny && respAny.data ? respAny.data : respAny;
+      // Blog API returns data directly as array, not wrapped in data property
+      const data = Array.isArray(respAny) ? respAny : (respAny && respAny.data ? respAny.data : respAny);
       const meta = respAny && respAny.meta ? respAny.meta : (data && data.meta ? data.meta : undefined);
+      
+      // Transform backend data to frontend format and filter published posts (unless includeAll is true)
+      const transformedData = Array.isArray(data) ? data
+        .filter((post: any) => params?.includeAll || post.status === 'Published') // Only show published posts unless includeAll is true
+        .map((post: any) => ({
+        id: String(post.id),
+        title: post.title,
+        content: post.content,
+        excerpt: post.excerpt || (post.content ? post.content.substring(0, 120) + (post.content.length > 120 ? '...' : '') : ''),
+        author: post.author,
+        category: post.category,
+        tags: post.tags || [],
+        featured: post.featured || false,
+        published: post.status === 'Published',
+        status: post.status || 'Draft', // Include status field for admin dashboard
+        publishedAt: post.publish_date || post.created_at,
+        createdAt: post.created_at,
+        updatedAt: post.updated_at,
+        likes: post.likes || 0,
+        views: post.views || 0,
+        coverImage: post.image_url || 'https://images.unsplash.com/photo-1486312338219-ce68d2c6f44d?w=800&h=400&fit=crop',
+        // Additional fields for frontend compatibility
+        image: post.image_url || 'https://images.unsplash.com/photo-1486312338219-ce68d2c6f44d?w=800&h=400&fit=crop',
+        date: post.publish_date || post.created_at,
+        readTime: '5 min read', // Default read time
+        isLiked: false // Default to not liked
+      })) : [];
+      
       return {
         success: true,
-        data: handleLaravelResponse<BlogPost[]>(response),
+        data: transformedData,
         pagination: meta || { page: 1, limit: 10, total: 0, totalPages: 1 }
       };
     } catch (error: any) {
@@ -644,9 +741,37 @@ export const blogService = {
   getBlogPost: async (id: string): Promise<ApiResponse<BlogPost>> => {
     try {
       const response = await apiClient.get(endpoints.blog.get(id));
+      // Blog API returns data directly, not wrapped in data property
+      const post = response as any;
+      
+      // Transform backend data to frontend format
+      const transformedPost = {
+        id: String(post.id),
+        title: post.title,
+        content: post.content,
+        excerpt: post.excerpt || (post.content ? post.content.substring(0, 120) + (post.content.length > 120 ? '...' : '') : ''),
+        author: post.author,
+        category: post.category,
+        tags: post.tags || [],
+        featured: post.featured || false,
+        published: post.status === 'Published',
+        status: post.status || 'Draft', // Include status field for admin dashboard
+        publishedAt: post.publish_date || post.created_at,
+        createdAt: post.created_at,
+        updatedAt: post.updated_at,
+        likes: post.likes || 0,
+        views: post.views || 0,
+        coverImage: post.image_url || 'https://images.unsplash.com/photo-1486312338219-ce68d2c6f44d?w=800&h=400&fit=crop',
+        // Additional fields for frontend compatibility
+        image: post.image_url || 'https://images.unsplash.com/photo-1486312338219-ce68d2c6f44d?w=800&h=400&fit=crop',
+        date: post.publish_date || post.created_at,
+        readTime: '5 min read', // Default read time
+        isLiked: false // Default to not liked
+      };
+      
       return {
         success: true,
-        data: handleLaravelResponse<BlogPost>(response)
+        data: transformedPost
       };
     } catch (error: any) {
       return {
@@ -684,9 +809,38 @@ export const blogService = {
         // Send as JSON
         response = await apiClient.post(endpoints.blog.create, data);
       }
+      
+      // Blog API returns data directly, not wrapped in data property
+      const post = (response.data || response) as any;
+      
+      // Transform backend data to frontend format
+      const transformedPost = {
+        id: String(post.id),
+        title: post.title,
+        content: post.content,
+        excerpt: post.excerpt || (post.content ? post.content.substring(0, 120) + (post.content.length > 120 ? '...' : '') : ''),
+        author: post.author,
+        category: post.category,
+        tags: post.tags || [],
+        featured: post.featured || false,
+        published: post.status === 'Published',
+        status: post.status || 'Draft', // Include status field for admin dashboard
+        publishedAt: post.publish_date || post.created_at,
+        createdAt: post.created_at,
+        updatedAt: post.updated_at,
+        likes: post.likes || 0,
+        views: post.views || 0,
+        coverImage: post.image_url || 'https://images.unsplash.com/photo-1486312338219-ce68d2c6f44d?w=800&h=400&fit=crop',
+        // Additional fields for frontend compatibility
+        image: post.image_url || 'https://images.unsplash.com/photo-1486312338219-ce68d2c6f44d?w=800&h=400&fit=crop',
+        date: post.publish_date || post.created_at,
+        readTime: '5 min read', // Default read time
+        isLiked: false // Default to not liked
+      };
+      
       return {
         success: true,
-        data: handleLaravelResponse<BlogPost>(response)
+        data: transformedPost
       };
     } catch (error: any) {
       return {
@@ -719,6 +873,30 @@ export const blogService = {
       return {
         success: false,
         error: error.message || 'Failed to delete blog post'
+      };
+    }
+  },
+
+  incrementViews: async (id: string): Promise<ApiResponse> => {
+    try {
+      await apiClient.post(endpoints.blog.view(id));
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to increment views'
+      };
+    }
+  },
+
+  incrementLikes: async (id: string): Promise<ApiResponse> => {
+    try {
+      await apiClient.post(endpoints.blog.like(id));
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to increment likes'
       };
     }
   },
@@ -919,6 +1097,80 @@ export const contactService = {
       return {
         success: false,
         error: error.message || 'Failed to submit contact form'
+      };
+    }
+  },
+};
+
+// Notification Services
+export const notificationService = {
+  getNotifications: async (): Promise<ApiResponse<Notification[]>> => {
+    try {
+      const response = await apiClient.get(endpoints.notifications.list);
+      return {
+        success: true,
+        data: handleLaravelResponse<Notification[]>(response)
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to get notifications',
+        data: []
+      };
+    }
+  },
+
+  getUnreadCount: async (): Promise<ApiResponse<{ count: number }>> => {
+    try {
+      const response = await apiClient.get(endpoints.notifications.unreadCount);
+      return {
+        success: true,
+        data: handleLaravelResponse<{ count: number }>(response)
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to get unread count',
+        data: { count: 0 }
+      };
+    }
+  },
+
+  markAsRead: async (id: string): Promise<ApiResponse> => {
+    try {
+      await apiClient.post(endpoints.notifications.markRead(id));
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to mark notification as read'
+      };
+    }
+  },
+
+  markAllAsRead: async (): Promise<ApiResponse> => {
+    try {
+      await apiClient.post(endpoints.notifications.markAllRead);
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to mark all notifications as read'
+      };
+    }
+  },
+
+  createNotification: async (data: CreateNotificationData): Promise<ApiResponse<Notification>> => {
+    try {
+      const response = await apiClient.post(endpoints.notifications.create, data);
+      return {
+        success: true,
+        data: handleLaravelResponse<Notification>(response)
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to create notification'
       };
     }
   },
